@@ -3,6 +3,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Rooms } from "../src/rooms";
 import { startWeb } from "../src/web";
+import { waitFor } from "./wait";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,7 +18,7 @@ test("the agent can list, join, read and edit a room over MCP", async () => {
   const web = startWeb(rooms, 8600 + Math.floor(Math.random() * 80))!;
 
   const transport = new StdioClientTransport({
-    command: "bun",
+    command: process.execPath,
     args: ["run", join(import.meta.dir, "..", "src", "mcp.ts")],
     env: { ...process.env, SPEC_ROOM_URL: `ws://127.0.0.1:${web.port}` },
   });
@@ -39,7 +40,7 @@ test("the agent can list, join, read and edit a room over MCP", async () => {
   }));
   expect(edited).toStartWith("Edited");
 
-  await new Promise((r) => setTimeout(r, 250));
+  await waitFor(() => rooms.get(info.id)!.text().includes("a line that changed"));
   expect(rooms.get(info.id)!.text()).toContain("a line that changed");
 
   const outline = text(await client.callTool({ name: "outline", arguments: {} }));
@@ -54,7 +55,7 @@ test("a tool call before joining a room explains itself rather than throwing", a
   const web = startWeb(new Rooms(join(tmpdir(), `mcp2-${Math.random().toString(36).slice(2)}`)),
                        8680 + Math.floor(Math.random() * 9))!;
   const transport = new StdioClientTransport({
-    command: "bun",
+    command: process.execPath,
     args: ["run", join(import.meta.dir, "..", "src", "mcp.ts")],
     env: { ...process.env, SPEC_ROOM_URL: `ws://127.0.0.1:${web.port}` },
   });

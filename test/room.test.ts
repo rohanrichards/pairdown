@@ -33,6 +33,13 @@ test("insertAfter places text below the anchor, not over it", () => {
   expect(r.text()).toBe("## One\n\nadded\nbody\n\n## Two\n");
 });
 
+test("insertAfter normalises inserted markdown to the document's CRLF, like edit does", () => {
+  const r = Room.load("abc", file(), "test");
+  r.content.insert(0, "## One\r\nbody\r\n");
+  expect(r.insertAfter("## One", "\n\nadded\nmore").ok).toBe(true);
+  expect(r.text()).toBe("## One\r\n\r\nadded\r\nmore\r\nbody\r\n");
+});
+
 test("save does not throw when path is invalid", () => {
   // Create a temporary file, then try to use a path that treats it as a directory.
   // This should cause mkdirSync or writeFileSync to fail.

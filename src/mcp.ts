@@ -260,8 +260,12 @@ function renderThread(r: RoomClient, c: CommentView): string {
 }
 
 async function joinRoom(info: RoomInfo | { id: string }) {
+  // Connect before swapping: if this rejects (bad room id, server hiccup),
+  // the currently joined room — if any — must stay live rather than being
+  // torn down for a connection that never replaced it.
+  const next = await RoomClient.connect(BASE, info.id);
   if (room) room.close();
-  room = await RoomClient.connect(BASE, info.id);
+  room = next;
   room.setPresence({ busy: false });
   // On attach, say how much is waiting without acting on it. Still no edits
   // until a person presses send.

@@ -38,6 +38,21 @@ test("insertAfter places text below the anchor, not over it", async () => {
   web.stop();
 });
 
+test("insertAfter normalises inserted markdown to the document's CRLF, like edit does", async () => {
+  const rooms = new Rooms(join(tmpdir(), `rc-${Math.random().toString(36).slice(2)}`));
+  const info = rooms.create("Insert CRLF test");
+  rooms.get(info.id)!.content.insert(0, "## One\r\nbody\r\n");
+  const web = startWeb(rooms, 8740 + Math.floor(Math.random() * 15))!;
+
+  const client = await RoomClient.connect(`ws://127.0.0.1:${web.port}`, info.id);
+  expect(client.insertAfter("## One", "\n\nadded\nmore").ok).toBe(true);
+  await waitFor(() => rooms.get(info.id)!.text().includes("added"));
+  expect(rooms.get(info.id)!.text()).toBe("## One\r\n\r\nadded\r\nmore\r\nbody\r\n");
+
+  client.close();
+  web.stop();
+});
+
 test("a room client publishes its presence as awareness, seen by another client in the same room", async () => {
   const rooms = new Rooms(join(tmpdir(), `rc-${Math.random().toString(36).slice(2)}`));
   const info = rooms.create("Presence test");

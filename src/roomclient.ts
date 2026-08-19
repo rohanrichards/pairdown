@@ -64,9 +64,11 @@ export class RoomClient {
   }
 
   insertAfter(needle: string, markdown: string) {
-    const hit = locate(this.text(), needle);
+    const text = this.text();
+    const hit = locate(text, needle);
     if (hit.at === -1) return { ok: false, reason: hit.reason };
-    this.content.insert(hit.at + hit.len, markdown);
+    const body = text.includes("\r\n") ? markdown.replace(/\r?\n/g, "\r\n") : markdown;
+    this.content.insert(hit.at + hit.len, body);
     return { ok: true };
   }
 

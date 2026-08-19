@@ -70,7 +70,7 @@ function check(label: string, cond: boolean, detail = "") {
 }
 
 const transport = new StdioClientTransport({
-  command: "bun",
+  command: process.execPath,
   args: ["run", join(ROOT, "src", "mcp.ts")],
   env: { ...process.env, SPEC_ROOM_URL: `ws://127.0.0.1:${web.port}` },
 });
