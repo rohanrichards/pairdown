@@ -87,7 +87,17 @@
     background: var(--card); position: relative; z-index: 2;
   }
   /* cards are absolutely positioned against their anchor's vertical position */
-  #comments { position: absolute; inset: 2.1rem .9rem 0 .9rem; }
+  #comments { position: absolute; inset: 2.1rem .9rem 2.1rem .9rem; }
+  #detached[hidden] { display: none; }
+  #detached {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 3;
+    display: block; width: 100%; text-align: left;
+    background: var(--card); border: 0; border-top: 1px solid var(--rule);
+    border-radius: 0; color: var(--soft);
+    font-family: var(--mono); font-size: .62rem; padding: .5rem .9rem; cursor: pointer;
+  }
+  #detached:hover { color: var(--ink); background: var(--paper); }
+  #detached::before { content: "⚑ "; color: var(--faint); }
 
   /* ---- the document itself ---- */
   .cm-editor { height: 100%; }
@@ -122,7 +132,14 @@
   .cmt-focus { box-shadow: 0 2px 10px rgba(0,0,0,.14); border-color: var(--accent); }
   .cmt-dim { opacity: .5; }
   .cmt-dim:hover { opacity: .78; }
-  .cmt-lost { border-left-style: dashed; }
+  .cmt-detached { border-left-style: dashed; }
+  .cmt-was {
+    font-family: var(--mono); font-size: .58rem; color: var(--faint);
+    border-left: 2px solid var(--rule); padding-left: .4rem; margin-bottom: .3rem;
+  }
+  .cmt-danger:hover { color: #b0453f; border-color: #b0453f; }
+  .cmt-armed { color: #b0453f !important; border-color: #b0453f !important; }
+  .panel-delete { align-self: flex-end; }
 
   .cmt-meta { display: flex; align-items: center; gap: .35rem; margin-bottom: .3rem; }
   .cmt-who { width: 13px; height: 13px; border-radius: 50%; flex: 0 0 auto; }
@@ -237,6 +254,7 @@
   <aside>
     <h2>Comments</h2>
     <div id="comments"></div>
+    <button id="detached" hidden></button>
   </aside>
 </main>
 

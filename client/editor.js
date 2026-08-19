@@ -530,14 +530,20 @@ function setAgentBusy(busy, commentId) {
 
 // ---- comments ---------------------------------------------------------------
 // Cards live in the right margin, aligned to the text they belong to, pushed
-// down when they would overlap. Commented text is highlighted in the document.
+// down when they would overlap, and scrolling away with the document.
 //
 // Decisions this implements, from the spec:
 //   - resolved comments grey out and stay, lower profile but readable
-//   - a comment whose text was deleted persists and says so, styled like resolved
-//   - Claude's replies get their own colour and an icon, so nobody mistakes an
-//     agent reply for a colleague's
+//   - a comment whose text is gone persists and says so, styled like resolved
+//   - Claude's replies get a reserved colour and an icon
 //   - no notifications
+//
+// Three anchor states, not two. A comment can lose its text by deletion, in
+// which case the anchor stops resolving — but it can also lose its text by
+// substitution, where the anchor still resolves perfectly onto whatever now
+// occupies those positions. That second case is the dangerous one: it looks
+// correct while pointing at words nobody commented on. Both are treated as
+// detached, and neither highlights the document.
 
 const AGENT = "claude";
 const CARD_GAP = 10;
@@ -557,47 +563,70 @@ function resolveAnchor(a) {
   } catch (e) { return null; }
 }
 
-/** Read the shared comment array into plain objects with live positions. */
+const squash = (s) => String(s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+
+/**
+ * Has the anchored text changed out from under the comment?
+ *
+ * Deliberately strict: normalised equality, or one string containing the other
+ * so a typo fix or a trimmed edge still counts as the same passage. Anything
+ * else is called drift. Over-flagging is the safer failure — a comment marked
+ * detached when the text merely moved is a small annoyance, while a comment
+ * silently pointing at unrelated words is misinformation.
+ */
+function textDrifted(quote, current) {
+  const q = squash(quote), c = squash(current);
+  if (!q) return false;            // nothing to compare against
+  if (!c) return true;             // range collapsed to nothing
+  if (q === c) return false;
+  return !(c.includes(q) || q.includes(c));
+}
+
 function commentViews() {
   const out = [];
+  const docText = view.state.doc;
   for (const m of comments) {
     const from = resolveAnchor(m.get("anchorFrom"));
     const to = resolveAnchor(m.get("anchorTo"));
     const replies = m.get("replies");
-    const lost = from === null || to === null || to <= from;
+    const quote = m.get("quote") || "";
+
+    let state = m.get("resolved") ? "resolved" : "open";
+    let current = "";
+    if (from === null || to === null || to <= from) {
+      state = "deleted";
+    } else {
+      current = docText.sliceString(from, Math.min(to, from + 2000));
+      if (textDrifted(quote, current)) state = "changed";
+    }
+    const detached = state === "deleted" || state === "changed";
+
     out.push({
       map: m,
       id: m.get("id"),
       author: m.get("author") || "anonymous",
       body: m.get("body") || "",
-      quote: m.get("quote") || "",
-      resolved: Boolean(m.get("resolved")),
+      quote,
+      current,
+      state,
+      detached,
+      resolved: state === "resolved",
       forAgent: Boolean(m.get("forAgent")),
       createdAt: m.get("createdAt") || "",
       replies: replies && replies.toArray ? replies.toArray() : [],
-      from: lost ? null : from,
-      to: lost ? null : to,
-      lost,
+      from: detached ? null : from,
+      to: detached ? null : to,
     });
   }
-  // document order, so the margin reads top to bottom
   out.sort((a, b) => (a.from ?? Infinity) - (b.from ?? Infinity));
   return out;
 }
 
-function highlightsFor(views, focusedId) {
-  const ranges = [];
-  for (const c of views) {
-    if (c.from === null || c.to === null) continue;
-    const cls = [
-      "cmt-hl",
-      c.resolved ? "cmt-hl-resolved" : c.forAgent ? "cmt-hl-agent" : "cmt-hl-open",
-      c.id === focusedId ? "cmt-hl-focus" : "",
-    ].join(" ").trim();
-    ranges.push(Decoration.mark({ class: cls }).range(c.from, c.to));
+function deleteComment(id) {
+  for (let i = 0; i < comments.length; i++) {
+    if (comments.get(i).get("id") === id) { comments.delete(i, 1); return true; }
   }
-  ranges.sort((a, b) => a.from - b.from || a.to - b.to);
-  return Decoration.set(ranges, true);
+  return false;
 }
 
 // ---- card rendering ---------------------------------------------------------
@@ -609,20 +638,18 @@ const AGENT_ICON =
   '<svg class="cmt-agent-icon" viewBox="0 0 12 12" aria-hidden="true">' +
   '<path d="M6 0.6 L7.4 4.6 L11.4 6 L7.4 7.4 L6 11.4 L4.6 7.4 L0.6 6 L4.6 4.6 Z"/></svg>';
 
-function isAgent(name) {
-  return String(name).toLowerCase() === AGENT;
-}
+const isAgent = (name) => String(name).toLowerCase() === AGENT;
 
 function avatar(name) {
-  const el = document.createElement("span");
+  const s = document.createElement("span");
   if (isAgent(name)) {
-    el.className = "cmt-who cmt-who-agent";
-    el.innerHTML = AGENT_ICON;
+    s.className = "cmt-who cmt-who-agent";
+    s.innerHTML = AGENT_ICON;
   } else {
-    el.className = "cmt-who";
-    el.style.background = colorFor(name);
+    s.className = "cmt-who";
+    s.style.background = colorFor(name);
   }
-  return el;
+  return s;
 }
 
 function metaRow(name, at) {
@@ -642,79 +669,6 @@ function metaRow(name, at) {
   return meta;
 }
 
-function buildCard(c) {
-  const card = document.createElement("div");
-  card.className = [
-    "cmt",
-    c.forAgent ? "cmt-agent" : "",
-    c.resolved ? "cmt-dim" : "",
-    c.lost ? "cmt-dim cmt-lost" : "",
-    c.id === focusedId ? "cmt-focus" : "",
-  ].join(" ").trim();
-  card.dataset.id = c.id;
-
-  card.appendChild(metaRow(c.author, c.createdAt));
-
-  if (c.lost) {
-    const gone = document.createElement("div");
-    gone.className = "cmt-gone";
-    gone.textContent = "the text this referred to was deleted";
-    card.appendChild(gone);
-  }
-
-  const body = document.createElement("div");
-  body.className = "cmt-body";
-  body.textContent = c.body;
-  card.appendChild(body);
-
-  // Claude's replies are shown, human replies too, but a long thread collapses
-  // rather than growing a 300px column into something unreadable.
-  const total = c.body.length + c.replies.reduce((n, r) => n + (r.body?.length ?? 0), 0);
-  const long = total > COLLAPSE_CHARS || c.replies.length > 1;
-
-  if (busyFor === c.id) {
-    const w = document.createElement("div");
-    w.className = "cmt-working";
-    w.innerHTML = '<i></i> Claude is working…';
-    card.appendChild(w);
-  }
-
-  if (c.replies.length && !long) {
-    for (const r of c.replies) card.appendChild(replyBlock(r));
-  } else if (c.replies.length) {
-    const more = document.createElement("button");
-    more.className = "cmt-expand";
-    more.textContent =
-      c.replies.length === 1 ? "1 reply — read thread" : c.replies.length + " replies — read thread";
-    more.onclick = (e) => { e.stopPropagation(); openPanel(c.id); };
-    card.appendChild(more);
-  } else if (long) {
-    const more = document.createElement("button");
-    more.className = "cmt-expand";
-    more.textContent = "read in full";
-    more.onclick = (e) => { e.stopPropagation(); openPanel(c.id); };
-    card.appendChild(more);
-    body.classList.add("cmt-body-clamp");
-  }
-
-  const actions = document.createElement("div");
-  actions.className = "cmt-actions";
-  const resolveBtn = document.createElement("button");
-  resolveBtn.className = "cmt-mini";
-  resolveBtn.textContent = c.resolved ? "reopen" : "resolve";
-  resolveBtn.onclick = (e) => { e.stopPropagation(); c.map.set("resolved", !c.resolved); };
-  actions.appendChild(resolveBtn);
-  const replyBtn = document.createElement("button");
-  replyBtn.className = "cmt-mini";
-  replyBtn.textContent = "reply";
-  replyBtn.onclick = (e) => { e.stopPropagation(); openPanel(c.id); };
-  actions.appendChild(replyBtn);
-  card.appendChild(actions);
-
-  card.onclick = () => focusComment(c.id, true);
-  return card;
-}
-
 function replyBlock(r) {
   const rd = document.createElement("div");
   rd.className = "cmt-reply" + (isAgent(r.author) ? " cmt-reply-agent" : "");
@@ -726,65 +680,187 @@ function replyBlock(r) {
   return rd;
 }
 
+/** Two-step delete, so a stray click never destroys a thread. */
+function deleteButton(id, onDone) {
+  const btn = document.createElement("button");
+  btn.className = "cmt-mini cmt-danger";
+  btn.textContent = "delete";
+  let armed = false;
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    if (!armed) {
+      armed = true;
+      btn.textContent = "delete — sure?";
+      btn.classList.add("cmt-armed");
+      setTimeout(() => {
+        if (!armed) return;
+        armed = false;
+        btn.textContent = "delete";
+        btn.classList.remove("cmt-armed");
+      }, 3000);
+      return;
+    }
+    deleteComment(id);
+    if (onDone) onDone();
+  };
+  return btn;
+}
+
+function stateNote(c) {
+  if (c.state === "deleted") return "the text this referred to was deleted";
+  if (c.state === "changed") return "the text this referred to has changed";
+  return null;
+}
+
+function buildCard(c, opts = {}) {
+  const card = document.createElement("div");
+  card.className = [
+    "cmt",
+    c.forAgent ? "cmt-agent" : "",
+    c.resolved || c.detached ? "cmt-dim" : "",
+    c.detached ? "cmt-detached" : "",
+    c.id === focusedId ? "cmt-focus" : "",
+  ].join(" ").trim();
+  card.dataset.id = c.id;
+
+  card.appendChild(metaRow(c.author, c.createdAt));
+
+  const note = stateNote(c);
+  if (note) {
+    const n = document.createElement("div");
+    n.className = "cmt-gone";
+    n.textContent = note;
+    card.appendChild(n);
+    if (c.quote) {
+      const was = document.createElement("div");
+      was.className = "cmt-was";
+      was.textContent = "was: " + c.quote.slice(0, 120);
+      card.appendChild(was);
+    }
+  }
+
+  const body = document.createElement("div");
+  body.className = "cmt-body";
+  body.textContent = c.body;
+  card.appendChild(body);
+
+  if (busyFor === c.id) {
+    const w = document.createElement("div");
+    w.className = "cmt-working";
+    w.innerHTML = "<i></i> Claude is working…";
+    card.appendChild(w);
+  }
+
+  const total = c.body.length + c.replies.reduce((n, r) => n + (r.body?.length ?? 0), 0);
+  const long = total > COLLAPSE_CHARS || c.replies.length > 1;
+
+  if (c.replies.length && !long) {
+    for (const r of c.replies) card.appendChild(replyBlock(r));
+  } else if (c.replies.length || long) {
+    if (long && !c.replies.length) body.classList.add("cmt-body-clamp");
+    const more = document.createElement("button");
+    more.className = "cmt-expand";
+    more.textContent = c.replies.length
+      ? (c.replies.length === 1 ? "1 reply — read thread" : c.replies.length + " replies — read thread")
+      : "read in full";
+    more.onclick = (e) => { e.stopPropagation(); openPanel(c.id); };
+    card.appendChild(more);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "cmt-actions";
+  const resolveBtn = document.createElement("button");
+  resolveBtn.className = "cmt-mini";
+  resolveBtn.textContent = c.resolved ? "reopen" : "resolve";
+  resolveBtn.onclick = (e) => { e.stopPropagation(); c.map.set("resolved", !c.resolved); };
+  if (!c.detached) actions.appendChild(resolveBtn);
+  const replyBtn = document.createElement("button");
+  replyBtn.className = "cmt-mini";
+  replyBtn.textContent = "reply";
+  replyBtn.onclick = (e) => { e.stopPropagation(); openPanel(c.id); };
+  actions.appendChild(replyBtn);
+  actions.appendChild(deleteButton(c.id, opts.onDelete || scheduleLayout));
+  card.appendChild(actions);
+
+  if (!c.detached) card.onclick = () => focusComment(c.id, true);
+  return card;
+}
+
 // ---- layout -----------------------------------------------------------------
-// Position each card against its anchor using the height map, so a card whose
-// text is scrolled out of view still sits in the right place relative to the
-// document rather than vanishing or bunching at the top.
+
+function highlightsFor(views) {
+  const ranges = [];
+  for (const c of views) {
+    // detached comments never highlight: the positions may still resolve, but
+    // they no longer point at the text the comment was about
+    if (c.detached || c.from === null || c.to === null) continue;
+    const cls = [
+      "cmt-hl",
+      c.resolved ? "cmt-hl-resolved" : c.forAgent ? "cmt-hl-agent" : "cmt-hl-open",
+      c.id === focusedId ? "cmt-hl-focus" : "",
+    ].join(" ").trim();
+    ranges.push(Decoration.mark({ class: cls }).range(c.from, c.to));
+  }
+  ranges.sort((a, b) => a.from - b.from || a.to - b.to);
+  return Decoration.set(ranges, true);
+}
 
 function layoutCards() {
   const host = el("comments");
   const views = commentViews();
+  const anchoredViews = views.filter((c) => !c.detached);
+  const detachedViews = views.filter((c) => c.detached);
 
-  // rebuild only when the set or state changed; cheap enough at this scale
   host.innerHTML = "";
+
   if (!views.length) {
     const empty = document.createElement("p");
     empty.className = "cmt-empty";
     empty.innerHTML =
       "Select any text to comment on it.<br>Mention <b>@claude</b> to ask the attached session.";
     host.appendChild(empty);
-    view.dispatch({ effects: setHighlights.of(Decoration.none) });
-    return;
   }
 
   const contentRect = view.contentDOM.getBoundingClientRect();
   const hostRect = host.getBoundingClientRect();
 
   const placed = [];
-  for (const c of views) {
+  for (const c of anchoredViews) {
     const card = buildCard(c);
     card.style.position = "absolute";
     card.style.visibility = "hidden";
     host.appendChild(card);
-    let desired;
-    if (c.from === null) {
-      desired = null; // orphaned: park at the end, after everything anchored
-    } else {
-      const block = view.lineBlockAt(c.from);
-      desired = contentRect.top + block.top - hostRect.top;
-    }
-    placed.push({ c, card, desired });
+    const block = view.lineBlockAt(c.from);
+    placed.push({ card, desired: contentRect.top + block.top - hostRect.top });
   }
+  placed.sort((a, b) => a.desired - b.desired);
 
-  // orphans sit below the anchored cards rather than fighting for a position
-  const anchored = placed.filter((p) => p.desired !== null);
-  const orphans = placed.filter((p) => p.desired === null);
-  anchored.sort((a, b) => a.desired - b.desired);
-
-  let cursor = 8;
-  for (const p of anchored) {
+  // No floor on the first position. Cards above the viewport get negative tops
+  // and are clipped away, which is what makes them scroll off the page instead
+  // of stacking against the top and crowding out everything below.
+  let cursor = -1e6;
+  for (const p of placed) {
     const top = Math.max(p.desired, cursor);
-    p.card.style.top = top + "px";
+    p.card.style.top = Math.round(top) + "px";
     p.card.style.visibility = "visible";
     cursor = top + p.card.offsetHeight + CARD_GAP;
   }
-  for (const p of orphans) {
-    p.card.style.top = cursor + "px";
-    p.card.style.visibility = "visible";
-    cursor = cursor + p.card.offsetHeight + CARD_GAP;
+
+  // Detached comments have no position to sit at, so they collapse into a
+  // pinned footer rather than eating margin space at the end of the document.
+  const footer = el("detached");
+  if (detachedViews.length) {
+    footer.hidden = false;
+    footer.textContent =
+      detachedViews.length === 1
+        ? "1 detached comment"
+        : detachedViews.length + " detached comments";
+    footer.onclick = () => openDetachedPanel();
+  } else {
+    footer.hidden = true;
   }
 
-  view.dispatch({ effects: setHighlights.of(highlightsFor(views, focusedId)) });
+  view.dispatch({ effects: setHighlights.of(highlightsFor(views)) });
 }
 
 let layoutQueued = false;
@@ -793,8 +869,6 @@ function scheduleLayout() {
   layoutQueued = true;
   requestAnimationFrame(() => { layoutQueued = false; layoutCards(); });
 }
-
-// kept as the name the rest of the file calls
 function render() { scheduleLayout(); }
 
 function focusComment(id, scroll) {
@@ -807,25 +881,22 @@ function focusComment(id, scroll) {
   scheduleLayout();
 }
 
-// ---- expanded thread panel --------------------------------------------------
+// ---- panels -----------------------------------------------------------------
 
 function closePanel() {
-  el("panel").hidden = true;
-  el("panel").innerHTML = "";
+  const p = el("panel");
+  p.hidden = true;
+  p.innerHTML = "";
 }
 
-function openPanel(id) {
-  const c = commentViews().find((x) => x.id === id);
-  if (!c) return;
-  focusedId = id;
+function panelShell(titleText) {
   const panel = el("panel");
   panel.hidden = false;
   panel.innerHTML = "";
-
   const head = document.createElement("div");
   head.className = "panel-head";
   const title = document.createElement("span");
-  title.textContent = c.lost ? "Comment (text deleted)" : "Comment";
+  title.textContent = titleText;
   head.appendChild(title);
   const x = document.createElement("button");
   x.className = "cmt-mini";
@@ -833,18 +904,25 @@ function openPanel(id) {
   x.onclick = closePanel;
   head.appendChild(x);
   panel.appendChild(head);
+  return panel;
+}
 
-  if (!c.lost) {
-    const q = document.createElement("div");
+function openPanel(id) {
+  const c = commentViews().find((x) => x.id === id);
+  if (!c) return;
+  focusedId = id;
+  const note = stateNote(c);
+  const panel = panelShell(note ? "Comment — " + note : "Comment");
+
+  const q = document.createElement("div");
+  if (c.detached) {
+    q.className = "panel-quote panel-quote-gone";
+    q.textContent = c.quote ? "was: " + c.quote.slice(0, 400) : note || "";
+  } else {
     q.className = "panel-quote";
     q.textContent = view.state.doc.sliceString(c.from, Math.min(c.to, c.from + 400));
-    panel.appendChild(q);
-  } else {
-    const q = document.createElement("div");
-    q.className = "panel-quote panel-quote-gone";
-    q.textContent = c.quote ? "was: " + c.quote.slice(0, 300) : "the text this referred to was deleted";
-    panel.appendChild(q);
   }
+  panel.appendChild(q);
 
   const thread = document.createElement("div");
   thread.className = "panel-thread";
@@ -872,7 +950,6 @@ function openPanel(id) {
     const replies = c.map.get("replies");
     doc.transact(() => {
       replies.push([{ author: ME, body: text, at: new Date().toISOString() }]);
-      // a reply mentioning @claude re-opens the thread to the agent
       if (/(^|\s)@claude\b/i.test(text)) {
         c.map.set("forAgent", true);
         c.map.set("resolved", false);
@@ -882,7 +959,32 @@ function openPanel(id) {
     openPanel(id);
   };
   form.appendChild(send);
+  const del = deleteButton(id, closePanel);
+  del.classList.add("panel-delete");
+  form.appendChild(del);
   panel.appendChild(form);
+}
+
+function openDetachedPanel() {
+  const detached = commentViews().filter((c) => c.detached);
+  const panel = panelShell(
+    "Detached — the text these referred to changed or was deleted",
+  );
+  const list = document.createElement("div");
+  list.className = "panel-thread";
+  if (!detached.length) {
+    const p = document.createElement("p");
+    p.className = "cmt-empty";
+    p.textContent = "Nothing detached.";
+    list.appendChild(p);
+  }
+  for (const c of detached) {
+    const card = buildCard(c, { onDelete: () => openDetachedPanel() });
+    card.style.position = "static";
+    card.style.marginBottom = ".5rem";
+    list.appendChild(card);
+  }
+  panel.appendChild(list);
 }
 
 // ---- composer ---------------------------------------------------------------
@@ -937,7 +1039,6 @@ view.scrollDOM.addEventListener("scroll", scheduleLayout, { passive: true });
 window.addEventListener("resize", scheduleLayout);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePanel(); });
 
-// clicking a highlight in the document focuses its card
 view.dom.addEventListener("mousedown", (e) => {
   const hl = e.target instanceof Element ? e.target.closest(".cmt-hl") : null;
   if (!hl) return;
