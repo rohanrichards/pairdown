@@ -20,6 +20,21 @@ test("renaming keeps the id, so a shared link never breaks", () => {
   expect(rooms.list()[0]).toMatchObject({ id: info.id, name: "New name" });
 });
 
+test("create() seeds the room's Yjs meta with its name, so every client agrees on it", () => {
+  const rooms = new Rooms(dir());
+  const info = rooms.create("Meta name test");
+  const room = rooms.get(info.id)!;
+  expect(room.meta.get("name")).toBe("Meta name test");
+});
+
+test("rename() updates the meta name on an already-open room, so it reaches every connected client live", () => {
+  const rooms = new Rooms(dir());
+  const info = rooms.create("Old name");
+  const room = rooms.get(info.id)!; // open it before renaming
+  expect(rooms.rename(info.id, "New name")).toBe(true);
+  expect(room.meta.get("name")).toBe("New name");
+});
+
 test("an unknown room id returns null rather than creating one", () => {
   const rooms = new Rooms(dir());
   expect(rooms.get("nosuchid")).toBeNull();

@@ -31,8 +31,12 @@ export class Rooms {
     const info: RoomInfo = { id: newId(), name, createdAt: new Date().toISOString(), session };
     this.index.push(info);
     this.flush();
-    this.open.set(info.id, Room.load(info.id, this.fileFor(info.id), name));
-    this.open.get(info.id)!.save();
+    const room = Room.load(info.id, this.fileFor(info.id), name);
+    // Every client displays the name out of meta, not the JSON index, so it
+    // has to be seeded here — before the initial save persists the doc.
+    room.meta.set("name", name);
+    this.open.set(info.id, room);
+    room.save();
     return info;
   }
 
@@ -52,7 +56,11 @@ export class Rooms {
     if (!info) return false;
     info.name = name;
     const room = this.open.get(id);
-    if (room) room.name = name;
+    if (room) {
+      room.name = name;
+      // Live so every connected browser repaints, not just the next join.
+      room.meta.set("name", name);
+    }
     this.flush();
     return true;
   }
