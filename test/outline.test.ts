@@ -43,3 +43,22 @@ test("headings inside a fenced block are not treated as headings", () => {
   const tricky = "# Real\n\n```md\n# Not real\n```\n";
   expect(outlineOf(tricky).map((e) => e.title)).toEqual(["Real"]);
 });
+
+test("headings nested inside longer fence delimiters are not treated as headings", () => {
+  const nested = "# Heading\n\n````markdown\n```\n# Not real\n```\n````\n\n## Next\n";
+  expect(outlineOf(nested).map((e) => e.title)).toEqual(["Heading", "Next"]);
+});
+
+test("tilde fences work the same way as backtick fences", () => {
+  const tildes = "# Real\n\n~~~md\n# Not real\n~~~\n";
+  expect(outlineOf(tildes).map((e) => e.title)).toEqual(["Real"]);
+});
+
+test("offset points to the start of each heading line", () => {
+  const text = "# First\n\nsome content\n\n```\nfenced\n```\n\n## Second\n";
+  const o = outlineOf(text);
+
+  // Verify offsets point to the first character of each heading
+  expect(text.substring(o[0].offset, o[0].offset + 7)).toBe("# First");
+  expect(text.substring(o[1].offset, o[1].offset + 9)).toBe("## Second");
+});
