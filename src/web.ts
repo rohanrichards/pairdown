@@ -9,7 +9,9 @@ import { doc } from "./doc";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-const INDEX = join(dirname(import.meta.dir), "public", "index.html");
+const ROOT = dirname(import.meta.dir);
+const INDEX = join(ROOT, "public", "index.html");
+const BUNDLE = join(ROOT, "public", "editor.js");
 
 type Sock = { send: (d: any) => void; data: { id: number } };
 
@@ -33,15 +35,37 @@ function broadcastPresence() {
   }
 }
 
+// Binary frames carry a one-byte tag so document updates and cursor/presence
+// (awareness) share one socket. The server applies document updates and relays
+// awareness untouched — it has no cursor of its own.
+const DOC_MSG = 0, AWARE_MSG = 1;
+
+function tagged(tag: number, payload: Uint8Array) {
+  const out = new Uint8Array(payload.length + 1);
+  out[0] = tag;
+  out.set(payload, 1);
+  return out;
+}
+
 doc.on("update", (update: Uint8Array, origin: unknown) => {
+  const frame = tagged(DOC_MSG, update);
   for (const ws of sockets) {
     if (ws === origin) continue;
-    try { ws.send(update); } catch { /* closing */ }
+    try { ws.send(frame); } catch { /* closing */ }
   }
 });
 
+/** Tell every open page whether the agent is mid-task, and on which thread. */
+export function setAgentBusy(busy: boolean, commentId?: string) {
+  const msg = JSON.stringify({ type: "agent-busy", busy, comment_id: commentId ?? null });
+  for (const ws of sockets) {
+    try { ws.send(msg); } catch { /* closing */ }
+  }
+}
+
 function listen(port: number) {
   const html = () => readFileSync(INDEX, "utf8");
+  const bundle = () => readFileSync(BUNDLE, "utf8");
 
   return Bun.serve({
     port,
@@ -55,17 +79,39 @@ function listen(port: number) {
       if (url.pathname === "/" || url.pathname === "/index.html") {
         return new Response(html(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
       }
+      if (url.pathname === "/editor.js") {
+        try {
+          return new Response(bundle(), {
+            headers: { "Content-Type": "text/javascript; charset=utf-8" },
+          });
+        } catch {
+          return new Response("// editor bundle missing - run: bun run build", {
+            status: 500,
+            headers: { "Content-Type": "text/javascript; charset=utf-8" },
+          });
+        }
+      }
       return new Response("not found", { status: 404 });
     },
     websocket: {
       open(ws) {
         sockets.add(ws);
-        ws.send(Y.encodeStateAsUpdate(doc));
+        ws.send(tagged(DOC_MSG, Y.encodeStateAsUpdate(doc)));
         broadcastPresence();
       },
       message(ws, msg) {
         if (typeof msg === "string") return;
-        Y.applyUpdate(doc, new Uint8Array(msg as ArrayBuffer), ws);
+        const buf = new Uint8Array(msg as ArrayBuffer);
+        const tag = buf[0], payload = buf.subarray(1);
+        if (tag === DOC_MSG) {
+          Y.applyUpdate(doc, payload, ws);
+        } else if (tag === AWARE_MSG) {
+          const frame = tagged(AWARE_MSG, payload);
+          for (const peer of sockets) {
+            if (peer === ws) continue;
+            try { peer.send(frame); } catch { /* closing */ }
+          }
+        }
       },
       close(ws) {
         sockets.delete(ws);

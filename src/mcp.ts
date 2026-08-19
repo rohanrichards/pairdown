@@ -25,7 +25,7 @@ import {
   replyTo,
   setResolved,
 } from "./doc";
-import { startWeb, setAgentPresent } from "./web";
+import { startWeb, setAgentPresent, setAgentBusy } from "./web";
 
 const PORT = Number(process.env.SPEC_ROOM_PORT ?? 8790);
 const AGENT_NAME = process.env.SPEC_ROOM_AGENT ?? "claude";
@@ -151,6 +151,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       return ok("Appended.");
 
     case "reply_comment":
+      // the thread has an answer now, so stop showing the working indicator
+      setAgentBusy(false);
       return replyTo(String(a.comment_id), AGENT_NAME, String(a.text ?? ""))
         ? ok("Reply posted.")
         : ok("No comment with that id.");
@@ -181,6 +183,9 @@ comments.observeDeep(() => {
         ? "(anchor lost)"
         : content.toString().slice(c.from, c.to).slice(0, 200);
 
+    // Tell every open page the session has picked this up. Without it, the
+    // gap between comment and reply reads as nothing happening.
+    setAgentBusy(true, c.id);
     mcp
       .notification({
         method: "notifications/claude/channel",
