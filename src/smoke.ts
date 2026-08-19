@@ -115,6 +115,26 @@ try {
   check("edit is visible in the document", after.includes("Expanded by the attached session"));
   check("human text survived the agent edit", after.includes(HUMAN_LINE));
   check("resolved thread drops out of open comments", !after.includes("please expand this section"));
+
+  // A document seeded on Windows carries CRLF. The agent reads it, retypes a
+  // passage with plain LF, and every multi-line edit used to fail as "text not
+  // found" - which made a real room uneditable by the agent.
+  await client.callTool({
+    name: "append_spec",
+    arguments: { markdown: "## Windows section\r\nspanning two lines" },
+  });
+  const crlf = text(
+    await client.callTool({
+      name: "edit_spec",
+      arguments: {
+        find: "## Windows section\nspanning two lines",
+        replace: "## Windows section\nedited across the line break",
+      },
+    }),
+  );
+  check("edit_spec matches an LF needle in a CRLF document", crlf.startsWith("Edited"), crlf);
+  const crlfAfter = text(await client.callTool({ name: "read_spec", arguments: {} }));
+  check("the CRLF edit landed", crlfAfter.includes("edited across the line break"));
 } finally {
   await client.close().catch(() => {});
   // belt and braces: make sure the spawned server child never outlives the test

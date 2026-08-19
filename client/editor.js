@@ -410,7 +410,7 @@ const renderBlocks = StateField.define({
 });
 
 const theme = EditorView.theme({
-  "&": { height: "100%", fontSize: "16px", backgroundColor: "transparent", color: "var(--ink)" },
+  "&": { height: "100%", fontSize: "18px", backgroundColor: "transparent", color: "var(--ink)" },
   "&.cm-focused": { outline: "none" },
   // Document padding belongs on .cm-content, never on .cm-scroller. CodeMirror
   // measures positions relative to the content element, so padding on the

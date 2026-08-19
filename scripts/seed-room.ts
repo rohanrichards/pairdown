@@ -13,7 +13,9 @@ if (!target || !seedPath) {
 }
 
 const doc = new Y.Doc();
-doc.getText("content").insert(0, readFileSync(seedPath, "utf8"));
+// normalise line endings: a CRLF document defeats multi-line agent edits
+const seed = readFileSync(seedPath, "utf8").replace(/\r\n/g, "\n");
+doc.getText("content").insert(0, seed);
 doc.getArray("comments"); // create it empty so the client finds the right type
 writeFileSync(target, Y.encodeStateAsUpdate(doc));
-console.log(`seeded ${target} with ${readFileSync(seedPath, "utf8").length} chars, 0 comments`);
+console.log(`seeded ${target} with ${seed.length} chars, 0 comments`);

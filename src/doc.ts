@@ -154,14 +154,39 @@ export function viewComments(): CommentView[] {
  * Deliberately NOT a whole-document write — the agent applies an operation into
  * the CRDT so a human typing elsewhere at the same moment is not clobbered.
  */
+/**
+ * Locate `needle`, tolerating a line-ending mismatch.
+ *
+ * A room seeded from a file written on Windows carries CRLF. An agent reads the
+ * document, retypes a passage with plain LF, and every multi-line edit fails
+ * with "text not found" - which happened, and left the document uneditable by
+ * the agent while looking like a model mistake. Try the plausible variants
+ * instead of making the caller guess which the document happens to hold.
+ */
+function locate(text: string, needle: string): { at: number; len: number; reason?: string } {
+  const lf = needle.replace(/\r\n/g, "\n");
+  const crlf = lf.replace(/\n/g, "\r\n");
+  const variants = [needle, ...[lf, crlf].filter((v) => v !== needle)];
+  for (const v of variants) {
+    if (!v) continue;
+    const at = text.indexOf(v);
+    if (at === -1) continue;
+    if (text.indexOf(v, at + 1) !== -1) return { at: -1, len: 0, reason: "text is not unique" };
+    return { at, len: v.length };
+  }
+  return { at: -1, len: 0, reason: "text not found" };
+}
+
 export function editContent(needle: string, replacement: string): { ok: boolean; reason?: string } {
   const text = content.toString();
-  const at = text.indexOf(needle);
-  if (at === -1) return { ok: false, reason: "text not found" };
-  if (text.indexOf(needle, at + 1) !== -1) return { ok: false, reason: "text is not unique" };
+  const hit = locate(text, needle);
+  if (hit.at === -1) return { ok: false, reason: hit.reason };
+  // write the replacement in whatever endings the document already uses, so an
+  // edit never leaves one section CRLF and the next LF
+  const body = text.includes("\r\n") ? replacement.replace(/\r?\n/g, "\r\n") : replacement;
   doc.transact(() => {
-    content.delete(at, needle.length);
-    content.insert(at, replacement);
+    content.delete(hit.at, hit.len);
+    content.insert(hit.at, body);
   });
   return { ok: true };
 }
