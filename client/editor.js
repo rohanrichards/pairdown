@@ -54,11 +54,13 @@ awareness.setLocalStateField("user", {
 
 // ---- transport --------------------------------------------------------------
 // Binary frames carry a one-byte tag: 0 = document update, 1 = awareness.
-// Text frames are presence JSON from the server.
+// The page is served at /r/<id>, so the room id comes from the URL path.
 
 const DOC_MSG = 0, AWARE_MSG = 1;
-const wsScheme = location.protocol === "https:" ? "wss://" : "ws://";
-const ws = new WebSocket(wsScheme + location.host + "/ws");
+const ROOM_ID = (location.pathname.match(/^\/r\/([a-z0-9]{8})/) || [])[1] || "";
+const proto = location.protocol === "https:" ? "wss:" : "ws:";
+const WS_URL = `${proto}//${location.host}/ws?room=${ROOM_ID}`;
+const ws = new WebSocket(WS_URL);
 ws.binaryType = "arraybuffer";
 
 function tagged(tag, payload) {
@@ -82,16 +84,6 @@ ws.onclose = () => setStatus(false);
 ws.onerror = () => setStatus(false);
 
 ws.onmessage = (ev) => {
-  if (typeof ev.data === "string") {
-    const m = JSON.parse(ev.data);
-    if (m.type === "presence") {
-      el("agentdot").className = "dot " + (m.agent ? "on" : "off");
-      el("agentstate").textContent = m.agent ? "agent attached" : "no agent attached";
-      el("agentstate").classList.toggle("muted", !m.agent);
-    }
-    if (m.type === "agent-busy") setAgentBusy(m.busy, m.comment_id);
-    return;
-  }
   const buf = new Uint8Array(ev.data);
   const tag = buf[0], payload = buf.subarray(1);
   if (tag === DOC_MSG) Y.applyUpdate(doc, payload, "remote");
@@ -110,6 +102,14 @@ awareness.on("update", ({ added, updated, removed }, origin) => {
 });
 
 window.addEventListener("beforeunload", () => awareness.destroy());
+
+// ---- room identity -----------------------------------------------------------
+// The name lives in room meta so every client agrees on it.
+
+const nameEl = el("roomname");
+const paintName = () => { nameEl.textContent = meta.get("name") || "untitled"; };
+meta.observe(paintName);
+paintName();
 
 // ---- live-preview styling ---------------------------------------------------
 // Headings, emphasis and code are styled as they would render, while the text
@@ -722,6 +722,25 @@ function renderPeople() {
 }
 awareness.on("change", renderPeople);
 renderPeople();
+
+// An agent is "attached" the moment some other awareness state carries an
+// "agent" field — there is no separate server-side boolean for this. That
+// state is `{ busy: false }` when idle, `{ busy: true, comment_id }` when
+// notified about one thread, or `{ busy: true }` while working a batched
+// review, so it doubles as the source for the #thinking indicator.
+function renderAgentPresence() {
+  let agent = null;
+  awareness.getStates().forEach((state, clientId) => {
+    if (clientId === doc.clientID) return;
+    if (state.agent) agent = state.agent;
+  });
+  el("agentdot").className = "dot " + (agent ? "on" : "off");
+  el("agentstate").textContent = agent ? "agent attached" : "no agent attached";
+  el("agentstate").classList.toggle("muted", !agent);
+  setAgentBusy(Boolean(agent && agent.busy), agent && agent.comment_id);
+}
+awareness.on("change", renderAgentPresence);
+renderAgentPresence();
 
 el("rename").onclick = () => {
   ME = askName(true);
