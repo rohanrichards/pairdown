@@ -40,10 +40,10 @@ doc.on("update", (update: Uint8Array, origin: unknown) => {
   }
 });
 
-export function startWeb(port: number) {
+function listen(port: number) {
   const html = () => readFileSync(INDEX, "utf8");
 
-  const server = Bun.serve({
+  return Bun.serve({
     port,
     hostname: "127.0.0.1",
     idleTimeout: 0,
@@ -73,6 +73,35 @@ export function startWeb(port: number) {
       },
     },
   });
+}
 
-  return server;
+/**
+ * Start the web server, walking forward if the port is taken.
+ *
+ * Never throws. A stale instance holding the port used to bring the whole
+ * process down with it, and because the MCP transport lives in this same
+ * process that surfaced to Claude Code as CONNECTION_CLOSED with no clue why.
+ * The document tools matter more than the browser UI, so a failure here is
+ * reported and survived rather than fatal.
+ */
+export function startWeb(port: number, attempts = 10) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const server = listen(port + i);
+      if (i > 0) {
+        process.stderr.write(`spec-room: port ${port} busy, using ${port + i}\n`);
+      }
+      return server;
+    } catch (e: any) {
+      if (e?.code !== "EADDRINUSE") {
+        process.stderr.write(`spec-room: web server failed to start: ${e}\n`);
+        return null;
+      }
+    }
+  }
+  process.stderr.write(
+    `spec-room: no free port in ${port}-${port + attempts - 1}; ` +
+      `document tools still work, browser UI unavailable\n`,
+  );
+  return null;
 }

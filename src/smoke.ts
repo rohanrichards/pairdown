@@ -117,6 +117,8 @@ try {
   check("resolved thread drops out of open comments", !after.includes("please expand this section"));
 } finally {
   await client.close().catch(() => {});
+  // belt and braces: make sure the spawned server child never outlives the test
+  await transport.close().catch(() => {});
   try { rmSync(DOC, { force: true }); } catch {}
 }
 

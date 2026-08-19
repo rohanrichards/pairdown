@@ -202,6 +202,10 @@ comments.observeDeep(() => {
 
 // ---- start ------------------------------------------------------------------
 await mcp.connect(new StdioServerTransport());
-startWeb(PORT);
+const web = startWeb(PORT);
 setAgentPresent(true);
-process.stderr.write(`spec-room: listening on http://127.0.0.1:${PORT}\n`);
+process.stderr.write(
+  web
+    ? `spec-room: listening on http://127.0.0.1:${web.port}\n`
+    : "spec-room: no browser UI (no free port); document tools still work\n",
+);
