@@ -104,7 +104,10 @@ const editor = document.getElementById("editor");
 let applyingRemote = false;
 let lastText = "";
 
-const ws = new WebSocket("ws://" + location.host + "/ws");
+// wss when the page is served over https (e.g. through a tunnel), otherwise
+// the browser blocks the socket as mixed content and the page never syncs.
+const WS_SCHEME = location.protocol === "https:" ? "wss://" : "ws://";
+const ws = new WebSocket(WS_SCHEME + location.host + "/ws");
 ws.binaryType = "arraybuffer";
 
 ws.onopen = () => {
