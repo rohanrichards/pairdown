@@ -18,6 +18,12 @@
     --accent: #24479e;
     --accent-ink: #24479e;
     --accent-bg:  #e7ecf7;
+    /* reserved for Claude — no human is ever assigned this */
+    --claude:     #6d4bd6;
+    --claude-bg:  #efe9fd;
+    --hl-open:    #fdf3d4;
+    --hl-agent:   #e7ecf7;
+    --hl-dim:     #e4e7e3;
     --serif: "Newsreader", Georgia, serif;
     --sans:  "Archivo", system-ui, sans-serif;
     --mono:  "IBM Plex Mono", ui-monospace, Menlo, monospace;
@@ -27,6 +33,8 @@
       --paper:#121513; --card:#191d1a; --ink:#e7ebe6; --soft:#99a39d;
       --faint:#5c655f; --rule:#2a302c; --accent:#9db8ff;
       --accent-ink:#b9ccff; --accent-bg:#1b2334;
+      --claude:#b39bff; --claude-bg:#241d3a;
+      --hl-open:#3a3320; --hl-agent:#1b2334; --hl-dim:#232824;
     }
   }
   * { box-sizing: border-box; }
@@ -70,12 +78,16 @@
   #editor { min-height: 0; overflow: hidden; position: relative; }
   aside {
     border-left: 1px solid var(--rule); background: var(--card);
-    overflow-y: auto; padding: 1rem .9rem; min-height: 0;
+    min-height: 0; overflow: hidden; position: relative;
   }
   aside h2 {
     font-family: var(--mono); font-size: .64rem; letter-spacing: .12em;
-    text-transform: uppercase; color: var(--faint); margin: 0 0 .8rem;
+    text-transform: uppercase; color: var(--faint);
+    margin: 0; padding: .7rem .9rem .5rem; border-bottom: 1px solid var(--rule);
+    background: var(--card); position: relative; z-index: 2;
   }
+  /* cards are absolutely positioned against their anchor's vertical position */
+  #comments { position: absolute; inset: 2.1rem .9rem 0 .9rem; }
 
   /* ---- the document itself ---- */
   .cm-editor { height: 100%; }
@@ -98,36 +110,92 @@
   @keyframes pulse { 0%,100% { opacity:.25; transform:scale(.8) } 50% { opacity:1; transform:scale(1.15) } }
   @media (prefers-reduced-motion: reduce) { #thinking i { animation: none; opacity: 1; } }
 
-  /* ---- comments ---- */
-  .c {
-    border: 1px solid var(--rule); border-left: 3px solid var(--rule);
-    padding: .6rem .7rem; margin-bottom: .7rem; background: var(--paper); border-radius: 2px;
+  /* ---- comment cards ---- */
+  .cmt-empty { color: var(--faint); font-size: .84rem; line-height: 1.6; padding-top: .6rem; }
+  .cmt {
+    width: 100%; background: var(--paper); border: 1px solid var(--rule);
+    border-left: 3px solid var(--rule); border-radius: 3px;
+    padding: .5rem .6rem; cursor: pointer;
+    transition: box-shadow .12s ease, border-color .12s ease;
   }
-  .c.agent { border-left-color: var(--accent); }
-  .c.resolved { opacity: .45; }
-  .c .meta {
-    display: flex; align-items: center; gap: .4rem;
-    font-family: var(--mono); font-size: .63rem; color: var(--soft); margin-bottom: .35rem;
+  .cmt-agent { border-left-color: var(--claude); }
+  .cmt-focus { box-shadow: 0 2px 10px rgba(0,0,0,.14); border-color: var(--accent); }
+  .cmt-dim { opacity: .5; }
+  .cmt-dim:hover { opacity: .78; }
+  .cmt-lost { border-left-style: dashed; }
+
+  .cmt-meta { display: flex; align-items: center; gap: .35rem; margin-bottom: .3rem; }
+  .cmt-who { width: 13px; height: 13px; border-radius: 50%; flex: 0 0 auto; }
+  .cmt-who-agent { background: var(--claude-bg); display: grid; place-items: center; border-radius: 3px; }
+  .cmt-agent-icon { width: 11px; height: 11px; fill: var(--claude); }
+  .cmt-name { font-family: var(--mono); font-size: .63rem; color: var(--soft); }
+  .cmt-name-agent { color: var(--claude); font-weight: 500; }
+  .cmt-time { font-family: var(--mono); font-size: .58rem; color: var(--faint); margin-left: auto; }
+
+  .cmt-gone { font-family: var(--mono); font-size: .58rem; color: var(--faint); margin-bottom: .25rem; }
+  .cmt-body { font-size: .84rem; line-height: 1.45; white-space: pre-wrap; }
+  .cmt-body-clamp {
+    display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
   }
-  .who-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
-  .badge {
-    font-family: var(--mono); font-size: .58rem; background: var(--accent-bg);
-    color: var(--accent-ink); padding: .1rem .32rem; border-radius: 2px; margin-left: auto;
+  .cmt-reply {
+    margin-top: .45rem; padding-top: .4rem; border-top: 1px dashed var(--rule);
   }
-  .badge.working::after { content: ""; }
-  .c .quote {
-    font-family: var(--serif); font-size: .82rem; color: var(--soft); cursor: pointer;
-    border-left: 2px solid var(--rule); padding-left: .5rem; margin: .35rem 0; font-style: italic;
+  .cmt-reply-agent { border-top-color: var(--claude); }
+  .cmt-expand {
+    background: none; border: 0; padding: .3rem 0 0; margin: 0;
+    color: var(--accent-ink); font-family: var(--mono); font-size: .62rem; cursor: pointer;
   }
-  .c .quote:hover { border-left-color: var(--accent); color: var(--ink); }
-  .c .lost { color: #b0453f; font-family: var(--mono); font-size: .62rem; font-style: normal; }
-  .c .body { font-size: .88rem; white-space: pre-wrap; line-height: 1.5; }
-  .c .reply {
-    margin-top: .5rem; padding-top: .5rem; border-top: 1px dashed var(--rule);
-    font-size: .84rem; line-height: 1.5;
+  .cmt-expand:hover { text-decoration: underline; }
+  .cmt-working {
+    display: flex; align-items: center; gap: .35rem; margin-top: .4rem;
+    font-family: var(--mono); font-size: .6rem; color: var(--claude);
   }
-  .c .reply b { font-family: var(--mono); font-size: .62rem; color: var(--accent-ink); font-weight: 500; }
-  .empty { color: var(--faint); font-size: .84rem; line-height: 1.6; }
+  .cmt-working i {
+    width: 5px; height: 5px; border-radius: 50%; background: var(--claude);
+    animation: pulse 1.1s ease-in-out infinite;
+  }
+  .cmt-actions { display: flex; gap: .3rem; margin-top: .45rem; }
+  .cmt-mini {
+    background: transparent; color: var(--soft); border: 1px solid var(--rule);
+    font-family: var(--mono); font-size: .58rem; padding: .16rem .4rem; border-radius: 2px;
+  }
+  .cmt-mini:hover { color: var(--ink); border-color: var(--soft); }
+
+  /* ---- highlights in the document ---- */
+  .cmt-hl { border-radius: 2px; box-shadow: inset 0 -2px 0 rgba(0,0,0,.08); }
+  .cmt-hl-open { background: var(--hl-open); }
+  .cmt-hl-agent { background: var(--hl-agent); }
+  .cmt-hl-resolved { background: var(--hl-dim); box-shadow: none; }
+  .cmt-hl-focus { box-shadow: inset 0 -2px 0 var(--accent); }
+
+  /* ---- expanded thread ---- */
+  #panel[hidden] { display: none; }
+  #panel {
+    position: fixed; right: 1.2rem; top: 4rem; width: 420px; max-height: 74vh;
+    display: flex; flex-direction: column; z-index: 30;
+    background: var(--card); border: 1px solid var(--rule); border-radius: 5px;
+    box-shadow: 0 12px 36px rgba(0,0,0,.22);
+  }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: .55rem .7rem; border-bottom: 1px solid var(--rule);
+    font-family: var(--mono); font-size: .66rem; color: var(--soft);
+  }
+  .panel-quote {
+    font-family: var(--serif); font-style: italic; font-size: .84rem; color: var(--soft);
+    border-left: 2px solid var(--accent); margin: .6rem .7rem; padding-left: .6rem;
+    max-height: 6rem; overflow: auto;
+  }
+  .panel-quote-gone { border-left-color: var(--faint); font-style: normal;
+    font-family: var(--mono); font-size: .66rem; }
+  .panel-thread { overflow-y: auto; padding: 0 .7rem .4rem; }
+  .panel-thread .cmt-reply:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+  .panel-reply { border-top: 1px solid var(--rule); padding: .55rem .7rem; display: flex; gap: .4rem; }
+  .panel-reply textarea {
+    flex: 1; height: 54px; resize: none; font-family: var(--sans); font-size: .82rem;
+    background: var(--paper); color: var(--ink); border: 1px solid var(--rule);
+    border-radius: 3px; padding: .35rem;
+  }
 
   /* ---- composer ---- */
   #composer {
@@ -171,6 +239,8 @@
     <div id="comments"></div>
   </aside>
 </main>
+
+<div id="panel" hidden></div>
 
 <div id="composer">
   <textarea id="ctext" placeholder="Comment on the selection. Mention @claude to ask the attached session."></textarea>

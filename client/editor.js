@@ -8,7 +8,7 @@ import * as Y from "yjs";
 import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from "y-protocols/awareness";
 import { EditorView, keymap, drawSelection, highlightActiveLine, Decoration, ViewPlugin, WidgetType } from "@codemirror/view";
 import DOMPurify from "dompurify";
-import { EditorState, RangeSetBuilder, StateField } from "@codemirror/state";
+import { EditorState, RangeSetBuilder, StateField, StateEffect } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from "@codemirror/language";
@@ -17,7 +17,9 @@ import { yCollab } from "y-codemirror.next";
 
 // ---- identity ---------------------------------------------------------------
 
-const PALETTE = ["#2f6f5e", "#a3651f", "#7a4ba8", "#b0453f", "#2450b5", "#1f7a6f", "#964d8a"];
+// Violet is reserved for Claude and deliberately absent here: a colour any
+// human could also be given would not distinguish the agent from a colleague.
+const PALETTE = ["#2f6f5e", "#a3651f", "#b0453f", "#2450b5", "#1f7a6f", "#964d8a", "#7a5c2e"];
 function colorFor(name) {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
@@ -442,6 +444,24 @@ const theme = EditorView.theme({
   },
 });
 
+// ---- inline comment highlights ----------------------------------------------
+// Comments live in the Yjs document rather than editor state, so their
+// decorations are pushed in with an effect when the comment set changes and
+// mapped through document changes in between. Declared here because the editor
+// below needs it at construction time.
+
+const setHighlights = StateEffect.define();
+
+const highlightField = StateField.define({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) if (e.is(setHighlights)) deco = e.value;
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
 // ---- editor -----------------------------------------------------------------
 
 const undoManager = new Y.UndoManager(content);
@@ -460,6 +480,7 @@ const view = new EditorView({
       syntaxHighlighting(liveStyle),
       hideMarkers,
       renderBlocks,
+      highlightField,
       theme,
       yCollab(content, awareness, { undoManager }),
     ],
@@ -501,14 +522,26 @@ el("rename").onclick = () => {
 
 // ---- agent activity ---------------------------------------------------------
 
-let busyFor = null;
 function setAgentBusy(busy, commentId) {
-  busyFor = busy ? commentId ?? true : null;
+  busyFor = busy ? (commentId ?? true) : null;
   el("thinking").hidden = !busy;
   render();
 }
 
 // ---- comments ---------------------------------------------------------------
+// Cards live in the right margin, aligned to the text they belong to, pushed
+// down when they would overlap. Commented text is highlighted in the document.
+//
+// Decisions this implements, from the spec:
+//   - resolved comments grey out and stay, lower profile but readable
+//   - a comment whose text was deleted persists and says so, styled like resolved
+//   - Claude's replies get their own colour and an icon, so nobody mistakes an
+//     agent reply for a colleague's
+//   - no notifications
+
+const AGENT = "claude";
+const CARD_GAP = 10;
+const COLLAPSE_CHARS = 260;
 
 const b64 = {
   enc: (u) => btoa(String.fromCharCode.apply(null, Array.from(u))),
@@ -523,6 +556,336 @@ function resolveAnchor(a) {
     return abs ? abs.index : null;
   } catch (e) { return null; }
 }
+
+/** Read the shared comment array into plain objects with live positions. */
+function commentViews() {
+  const out = [];
+  for (const m of comments) {
+    const from = resolveAnchor(m.get("anchorFrom"));
+    const to = resolveAnchor(m.get("anchorTo"));
+    const replies = m.get("replies");
+    const lost = from === null || to === null || to <= from;
+    out.push({
+      map: m,
+      id: m.get("id"),
+      author: m.get("author") || "anonymous",
+      body: m.get("body") || "",
+      quote: m.get("quote") || "",
+      resolved: Boolean(m.get("resolved")),
+      forAgent: Boolean(m.get("forAgent")),
+      createdAt: m.get("createdAt") || "",
+      replies: replies && replies.toArray ? replies.toArray() : [],
+      from: lost ? null : from,
+      to: lost ? null : to,
+      lost,
+    });
+  }
+  // document order, so the margin reads top to bottom
+  out.sort((a, b) => (a.from ?? Infinity) - (b.from ?? Infinity));
+  return out;
+}
+
+function highlightsFor(views, focusedId) {
+  const ranges = [];
+  for (const c of views) {
+    if (c.from === null || c.to === null) continue;
+    const cls = [
+      "cmt-hl",
+      c.resolved ? "cmt-hl-resolved" : c.forAgent ? "cmt-hl-agent" : "cmt-hl-open",
+      c.id === focusedId ? "cmt-hl-focus" : "",
+    ].join(" ").trim();
+    ranges.push(Decoration.mark({ class: cls }).range(c.from, c.to));
+  }
+  ranges.sort((a, b) => a.from - b.from || a.to - b.to);
+  return Decoration.set(ranges, true);
+}
+
+// ---- card rendering ---------------------------------------------------------
+
+let focusedId = null;
+let busyFor = null;
+
+const AGENT_ICON =
+  '<svg class="cmt-agent-icon" viewBox="0 0 12 12" aria-hidden="true">' +
+  '<path d="M6 0.6 L7.4 4.6 L11.4 6 L7.4 7.4 L6 11.4 L4.6 7.4 L0.6 6 L4.6 4.6 Z"/></svg>';
+
+function isAgent(name) {
+  return String(name).toLowerCase() === AGENT;
+}
+
+function avatar(name) {
+  const el = document.createElement("span");
+  if (isAgent(name)) {
+    el.className = "cmt-who cmt-who-agent";
+    el.innerHTML = AGENT_ICON;
+  } else {
+    el.className = "cmt-who";
+    el.style.background = colorFor(name);
+  }
+  return el;
+}
+
+function metaRow(name, at) {
+  const meta = document.createElement("div");
+  meta.className = "cmt-meta";
+  meta.appendChild(avatar(name));
+  const who = document.createElement("span");
+  who.className = isAgent(name) ? "cmt-name cmt-name-agent" : "cmt-name";
+  who.textContent = isAgent(name) ? "Claude" : name;
+  meta.appendChild(who);
+  if (at) {
+    const t = document.createElement("span");
+    t.className = "cmt-time";
+    t.textContent = String(at).slice(11, 16);
+    meta.appendChild(t);
+  }
+  return meta;
+}
+
+function buildCard(c) {
+  const card = document.createElement("div");
+  card.className = [
+    "cmt",
+    c.forAgent ? "cmt-agent" : "",
+    c.resolved ? "cmt-dim" : "",
+    c.lost ? "cmt-dim cmt-lost" : "",
+    c.id === focusedId ? "cmt-focus" : "",
+  ].join(" ").trim();
+  card.dataset.id = c.id;
+
+  card.appendChild(metaRow(c.author, c.createdAt));
+
+  if (c.lost) {
+    const gone = document.createElement("div");
+    gone.className = "cmt-gone";
+    gone.textContent = "the text this referred to was deleted";
+    card.appendChild(gone);
+  }
+
+  const body = document.createElement("div");
+  body.className = "cmt-body";
+  body.textContent = c.body;
+  card.appendChild(body);
+
+  // Claude's replies are shown, human replies too, but a long thread collapses
+  // rather than growing a 300px column into something unreadable.
+  const total = c.body.length + c.replies.reduce((n, r) => n + (r.body?.length ?? 0), 0);
+  const long = total > COLLAPSE_CHARS || c.replies.length > 1;
+
+  if (busyFor === c.id) {
+    const w = document.createElement("div");
+    w.className = "cmt-working";
+    w.innerHTML = '<i></i> Claude is working…';
+    card.appendChild(w);
+  }
+
+  if (c.replies.length && !long) {
+    for (const r of c.replies) card.appendChild(replyBlock(r));
+  } else if (c.replies.length) {
+    const more = document.createElement("button");
+    more.className = "cmt-expand";
+    more.textContent =
+      c.replies.length === 1 ? "1 reply — read thread" : c.replies.length + " replies — read thread";
+    more.onclick = (e) => { e.stopPropagation(); openPanel(c.id); };
+    card.appendChild(more);
+  } else if (long) {
+    const more = document.createElement("button");
+    more.className = "cmt-expand";
+    more.textContent = "read in full";
+    more.onclick = (e) => { e.stopPropagation(); openPanel(c.id); };
+    card.appendChild(more);
+    body.classList.add("cmt-body-clamp");
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "cmt-actions";
+  const resolveBtn = document.createElement("button");
+  resolveBtn.className = "cmt-mini";
+  resolveBtn.textContent = c.resolved ? "reopen" : "resolve";
+  resolveBtn.onclick = (e) => { e.stopPropagation(); c.map.set("resolved", !c.resolved); };
+  actions.appendChild(resolveBtn);
+  const replyBtn = document.createElement("button");
+  replyBtn.className = "cmt-mini";
+  replyBtn.textContent = "reply";
+  replyBtn.onclick = (e) => { e.stopPropagation(); openPanel(c.id); };
+  actions.appendChild(replyBtn);
+  card.appendChild(actions);
+
+  card.onclick = () => focusComment(c.id, true);
+  return card;
+}
+
+function replyBlock(r) {
+  const rd = document.createElement("div");
+  rd.className = "cmt-reply" + (isAgent(r.author) ? " cmt-reply-agent" : "");
+  rd.appendChild(metaRow(r.author, r.at));
+  const t = document.createElement("div");
+  t.className = "cmt-body";
+  t.textContent = r.body || "";
+  rd.appendChild(t);
+  return rd;
+}
+
+// ---- layout -----------------------------------------------------------------
+// Position each card against its anchor using the height map, so a card whose
+// text is scrolled out of view still sits in the right place relative to the
+// document rather than vanishing or bunching at the top.
+
+function layoutCards() {
+  const host = el("comments");
+  const views = commentViews();
+
+  // rebuild only when the set or state changed; cheap enough at this scale
+  host.innerHTML = "";
+  if (!views.length) {
+    const empty = document.createElement("p");
+    empty.className = "cmt-empty";
+    empty.innerHTML =
+      "Select any text to comment on it.<br>Mention <b>@claude</b> to ask the attached session.";
+    host.appendChild(empty);
+    view.dispatch({ effects: setHighlights.of(Decoration.none) });
+    return;
+  }
+
+  const contentRect = view.contentDOM.getBoundingClientRect();
+  const hostRect = host.getBoundingClientRect();
+
+  const placed = [];
+  for (const c of views) {
+    const card = buildCard(c);
+    card.style.position = "absolute";
+    card.style.visibility = "hidden";
+    host.appendChild(card);
+    let desired;
+    if (c.from === null) {
+      desired = null; // orphaned: park at the end, after everything anchored
+    } else {
+      const block = view.lineBlockAt(c.from);
+      desired = contentRect.top + block.top - hostRect.top;
+    }
+    placed.push({ c, card, desired });
+  }
+
+  // orphans sit below the anchored cards rather than fighting for a position
+  const anchored = placed.filter((p) => p.desired !== null);
+  const orphans = placed.filter((p) => p.desired === null);
+  anchored.sort((a, b) => a.desired - b.desired);
+
+  let cursor = 8;
+  for (const p of anchored) {
+    const top = Math.max(p.desired, cursor);
+    p.card.style.top = top + "px";
+    p.card.style.visibility = "visible";
+    cursor = top + p.card.offsetHeight + CARD_GAP;
+  }
+  for (const p of orphans) {
+    p.card.style.top = cursor + "px";
+    p.card.style.visibility = "visible";
+    cursor = cursor + p.card.offsetHeight + CARD_GAP;
+  }
+
+  view.dispatch({ effects: setHighlights.of(highlightsFor(views, focusedId)) });
+}
+
+let layoutQueued = false;
+function scheduleLayout() {
+  if (layoutQueued) return;
+  layoutQueued = true;
+  requestAnimationFrame(() => { layoutQueued = false; layoutCards(); });
+}
+
+// kept as the name the rest of the file calls
+function render() { scheduleLayout(); }
+
+function focusComment(id, scroll) {
+  focusedId = id;
+  const c = commentViews().find((x) => x.id === id);
+  if (c && scroll && c.from !== null) {
+    view.dispatch({ selection: { anchor: c.from, head: c.to }, scrollIntoView: true });
+    view.focus();
+  }
+  scheduleLayout();
+}
+
+// ---- expanded thread panel --------------------------------------------------
+
+function closePanel() {
+  el("panel").hidden = true;
+  el("panel").innerHTML = "";
+}
+
+function openPanel(id) {
+  const c = commentViews().find((x) => x.id === id);
+  if (!c) return;
+  focusedId = id;
+  const panel = el("panel");
+  panel.hidden = false;
+  panel.innerHTML = "";
+
+  const head = document.createElement("div");
+  head.className = "panel-head";
+  const title = document.createElement("span");
+  title.textContent = c.lost ? "Comment (text deleted)" : "Comment";
+  head.appendChild(title);
+  const x = document.createElement("button");
+  x.className = "cmt-mini";
+  x.textContent = "close";
+  x.onclick = closePanel;
+  head.appendChild(x);
+  panel.appendChild(head);
+
+  if (!c.lost) {
+    const q = document.createElement("div");
+    q.className = "panel-quote";
+    q.textContent = view.state.doc.sliceString(c.from, Math.min(c.to, c.from + 400));
+    panel.appendChild(q);
+  } else {
+    const q = document.createElement("div");
+    q.className = "panel-quote panel-quote-gone";
+    q.textContent = c.quote ? "was: " + c.quote.slice(0, 300) : "the text this referred to was deleted";
+    panel.appendChild(q);
+  }
+
+  const thread = document.createElement("div");
+  thread.className = "panel-thread";
+  const first = document.createElement("div");
+  first.className = "cmt-reply";
+  first.appendChild(metaRow(c.author, c.createdAt));
+  const fb = document.createElement("div");
+  fb.className = "cmt-body";
+  fb.textContent = c.body;
+  first.appendChild(fb);
+  thread.appendChild(first);
+  for (const r of c.replies) thread.appendChild(replyBlock(r));
+  panel.appendChild(thread);
+
+  const form = document.createElement("div");
+  form.className = "panel-reply";
+  const ta = document.createElement("textarea");
+  ta.placeholder = "Reply. Mention @claude to ask the attached session.";
+  form.appendChild(ta);
+  const send = document.createElement("button");
+  send.textContent = "Reply";
+  send.onclick = () => {
+    const text = ta.value.trim();
+    if (!text) return;
+    const replies = c.map.get("replies");
+    doc.transact(() => {
+      replies.push([{ author: ME, body: text, at: new Date().toISOString() }]);
+      // a reply mentioning @claude re-opens the thread to the agent
+      if (/(^|\s)@claude\b/i.test(text)) {
+        c.map.set("forAgent", true);
+        c.map.set("resolved", false);
+      }
+    }, "local");
+    ta.value = "";
+    openPanel(id);
+  };
+  form.appendChild(send);
+  panel.appendChild(form);
+}
+
+// ---- composer ---------------------------------------------------------------
 
 const composer = el("composer");
 let pending = null;
@@ -540,7 +903,8 @@ view.dom.addEventListener("mouseup", () => {
   composer.style.display = "block";
   const top = Math.min((coords ? coords.bottom : 200) + 8, window.innerHeight - 190);
   composer.style.top = Math.max(60, top) + "px";
-  composer.style.left = Math.max(16, Math.min((coords ? coords.left : 100), window.innerWidth - 640)) + "px";
+  composer.style.left =
+    Math.max(16, Math.min(coords ? coords.left : 100, window.innerWidth - 660)) + "px";
   el("ctext").focus();
 });
 
@@ -566,79 +930,22 @@ el("cadd").onclick = () => {
   hideComposer();
 };
 
-function render() {
-  const host = el("comments");
-  const open = [];
-  for (const m of comments) open.push(m);
-  if (open.length === 0) {
-    host.innerHTML = '<p class="empty">Select any text to comment on it.<br>Mention <b>@claude</b> to ask the attached session.</p>';
-    return;
-  }
-  host.innerHTML = "";
-  for (const m of open) {
-    const from = resolveAnchor(m.get("anchorFrom"));
-    const to = resolveAnchor(m.get("anchorTo"));
-    const id = m.get("id");
-    const author = m.get("author") || "anonymous";
+// ---- keep the margin in step with the document ------------------------------
 
-    const card = document.createElement("div");
-    card.className = "c" + (m.get("forAgent") ? " agent" : "") + (m.get("resolved") ? " resolved" : "");
+comments.observeDeep(scheduleLayout);
+view.scrollDOM.addEventListener("scroll", scheduleLayout, { passive: true });
+window.addEventListener("resize", scheduleLayout);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePanel(); });
 
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    const dot = document.createElement("span");
-    dot.className = "who-dot";
-    dot.style.background = colorFor(author);
-    meta.appendChild(dot);
-    meta.appendChild(document.createTextNode(author + " · " + String(m.get("createdAt")).slice(11, 16)));
-    if (m.get("forAgent")) {
-      const b = document.createElement("span");
-      b.className = "badge";
-      b.textContent = busyFor === id ? "working…" : "@claude";
-      if (busyFor === id) b.classList.add("working");
-      meta.appendChild(b);
-    }
-    card.appendChild(meta);
+// clicking a highlight in the document focuses its card
+view.dom.addEventListener("mousedown", (e) => {
+  const hl = e.target instanceof Element ? e.target.closest(".cmt-hl") : null;
+  if (!hl) return;
+  const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+  if (pos == null) return;
+  const hit = commentViews().find((c) => c.from !== null && pos >= c.from && pos <= c.to);
+  if (hit) focusComment(hit.id, false);
+});
 
-    const q = document.createElement("div");
-    q.className = "quote";
-    if (from === null || to === null) {
-      q.innerHTML = '<span class="lost">anchor lost — the text was deleted</span>';
-    } else {
-      q.textContent = view.state.doc.sliceString(from, Math.min(to, from + 140)) || "(empty)";
-      q.onclick = () => {
-        view.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true });
-        view.focus();
-      };
-    }
-    card.appendChild(q);
-
-    const body = document.createElement("div");
-    body.className = "body";
-    body.textContent = m.get("body");
-    card.appendChild(body);
-
-    const replies = m.get("replies");
-    for (const r of (replies && replies.toArray ? replies.toArray() : [])) {
-      const rd = document.createElement("div");
-      rd.className = "reply";
-      const who = document.createElement("b");
-      who.textContent = r.author;
-      rd.appendChild(who);
-      rd.appendChild(document.createTextNode(" " + r.body));
-      card.appendChild(rd);
-    }
-
-    const btn = document.createElement("button");
-    btn.className = "ghost small";
-    btn.textContent = m.get("resolved") ? "reopen" : "resolve";
-    btn.onclick = () => m.set("resolved", !m.get("resolved"));
-    card.appendChild(btn);
-
-    host.appendChild(card);
-  }
-}
-
-comments.observeDeep(render);
-content.observe(render);
-render();
+view.dom.addEventListener("focusin", scheduleLayout);
+scheduleLayout();
