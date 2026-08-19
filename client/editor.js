@@ -974,7 +974,7 @@ function layoutCards() {
     const empty = document.createElement("p");
     empty.className = "cmt-empty";
     empty.innerHTML =
-      "Select any text to comment on it.<br>Nothing reaches the agent until you press <b>send to claude</b>.";
+      "Select any text to comment on it.<br>Say <b>@claude</b> to ask the session now, or leave notes and press <b>send to claude</b> when you are done.";
     host.appendChild(empty);
   }
 
@@ -1097,7 +1097,7 @@ function openPanel(id) {
   const form = document.createElement("div");
   form.className = "panel-reply";
   const ta = document.createElement("textarea");
-  ta.placeholder = "Reply. Press send to claude when your review pass is done.";
+  ta.placeholder = "Reply. Mention @claude to reach the session now.";
   form.appendChild(ta);
   const send = document.createElement("button");
   send.textContent = "Reply";
@@ -1219,8 +1219,8 @@ function refreshSend() {
   btn.textContent = n === 0 ? "send to claude" : `send to claude · ${n}`;
   btn.title =
     n === 0
-      ? "Leave comments first. Nothing is sent to the agent until you press this."
-      : `Send ${n} comment${n === 1 ? "" : "s"} to the attached session in one go`;
+      ? "Nothing waiting. Untagged comments gather here until you send them."
+      : `Send ${n} unanswered comment${n === 1 ? "" : "s"} to the session as one review`;
 }
 
 function sendToClaude() {
