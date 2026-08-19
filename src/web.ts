@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 
 const ROOT = dirname(import.meta.dir);
 const INDEX = join(ROOT, "public", "index.html");
-const BUNDLE = join(ROOT, "public", "editor.js");
+const JS_DIR = join(ROOT, "public", "js");
 
 type Sock = { send: (d: any) => void; data: { id: number } };
 
@@ -65,7 +65,6 @@ export function setAgentBusy(busy: boolean, commentId?: string) {
 
 function listen(port: number) {
   const html = () => readFileSync(INDEX, "utf8");
-  const bundle = () => readFileSync(BUNDLE, "utf8");
 
   return Bun.serve({
     port,
@@ -79,13 +78,20 @@ function listen(port: number) {
       if (url.pathname === "/" || url.pathname === "/index.html") {
         return new Response(html(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
       }
-      if (url.pathname === "/editor.js") {
+      // The client is code-split, so mermaid and friends load only when a
+      // document actually contains a diagram. Serve the chunks, but never let a
+      // path escape public/js.
+      if (url.pathname.startsWith("/js/")) {
+        const name = url.pathname.slice("/js/".length);
+        if (!/^[A-Za-z0-9._-]+\.js$/.test(name)) {
+          return new Response("not found", { status: 404 });
+        }
         try {
-          return new Response(bundle(), {
+          return new Response(readFileSync(join(JS_DIR, name), "utf8"), {
             headers: { "Content-Type": "text/javascript; charset=utf-8" },
           });
         } catch {
-          return new Response("// editor bundle missing - run: bun run build", {
+          return new Response("// bundle missing - run: bun run build", {
             status: 500,
             headers: { "Content-Type": "text/javascript; charset=utf-8" },
           });

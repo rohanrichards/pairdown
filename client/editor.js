@@ -6,8 +6,9 @@
 // while the shared document is text rather than a node tree.
 import * as Y from "yjs";
 import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from "y-protocols/awareness";
-import { EditorView, keymap, drawSelection, highlightActiveLine, Decoration, ViewPlugin } from "@codemirror/view";
-import { EditorState, RangeSetBuilder } from "@codemirror/state";
+import { EditorView, keymap, drawSelection, highlightActiveLine, Decoration, ViewPlugin, WidgetType } from "@codemirror/view";
+import DOMPurify from "dompurify";
+import { EditorState, RangeSetBuilder, StateField } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from "@codemirror/language";
@@ -160,6 +161,184 @@ const hideMarkers = ViewPlugin.fromClass(
   { decorations: (v) => v.decorations },
 );
 
+// ---- visual blocks ----------------------------------------------------------
+// A fenced ```svg or ```html block, and any markdown image, renders in place
+// when your cursor is elsewhere, and reverts to source the moment you click
+// into it. Diagrams stay text in the document, which is what lets the agent
+// write them and lets edit_spec change them.
+//
+// Everything is sanitised. This document is writable by anyone holding the
+// link, so unsanitised markup would let any collaborator run script in every
+// other viewer's browser.
+
+const CLEAN = {
+  USE_PROFILES: { html: true, svg: true, svgFilters: true },
+  FORBID_TAGS: ["script", "iframe", "object", "embed", "form", "link", "meta", "base"],
+  FORBID_ATTR: ["srcdoc", "formaction", "ping"],
+};
+
+// Mermaid is loaded on demand — it is by far the largest dependency here, and
+// most documents never contain a diagram.
+let mermaidReady = null;
+function loadMermaid() {
+  if (!mermaidReady) {
+    mermaidReady = import("mermaid").then(({ default: mermaid }) => {
+      const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: "base",
+        fontFamily: "IBM Plex Mono, ui-monospace, monospace",
+        // Mermaid puts node labels in <foreignObject> by default, which the
+        // sanitiser strips — leaving diagrams with boxes and no words. Plain
+        // <text> labels survive sanitising and look the same here.
+        htmlLabels: false,
+        flowchart: { htmlLabels: false, curve: "basis" },
+        class: { htmlLabels: false },
+        state: { htmlLabels: false },
+        themeVariables: {
+          background: "transparent",
+          primaryColor: dark ? "#1b2334" : "#e7ecf7",
+          primaryBorderColor: dark ? "#9db8ff" : "#24479e",
+          primaryTextColor: dark ? "#e7ebe6" : "#171c19",
+          lineColor: dark ? "#99a39d" : "#5d6662",
+          secondaryColor: dark ? "#191d1a" : "#fbfcfa",
+          tertiaryColor: dark ? "#191d1a" : "#fbfcfa",
+          fontSize: "13px",
+        },
+      });
+      return mermaid;
+    });
+  }
+  return mermaidReady;
+}
+
+let mermaidSeq = 0;
+
+class MermaidWidget extends WidgetType {
+  constructor(source) { super(); this.source = source; }
+  eq(other) { return other.source === this.source; }
+  toDOM() {
+    const wrap = document.createElement("div");
+    wrap.className = "embed embed-mermaid";
+    wrap.textContent = "rendering diagram…";
+    loadMermaid()
+      .then((mermaid) => mermaid.render("mmd-" + mermaidSeq++, this.source))
+      .then(({ svg }) => {
+        wrap.textContent = "";
+        // mermaid output is generated from the source, but the source came from
+        // a shared document, so it goes through the sanitiser like everything else
+        wrap.innerHTML = DOMPurify.sanitize(svg, CLEAN);
+      })
+      .catch((e) => {
+        wrap.className = "embed embed-error";
+        wrap.textContent = "mermaid could not render this: " + (e?.message ?? e);
+      });
+    return wrap;
+  }
+}
+
+class MarkupWidget extends WidgetType {
+  constructor(source, kind) { super(); this.source = source; this.kind = kind; }
+  eq(other) { return other.source === this.source && other.kind === this.kind; }
+  ignoreEvent() { return false; }
+  toDOM() {
+    const wrap = document.createElement("div");
+    wrap.className = "embed embed-" + this.kind;
+    try {
+      wrap.innerHTML = DOMPurify.sanitize(this.source, CLEAN);
+      if (!wrap.innerHTML.trim()) throw new Error("nothing left after sanitising");
+    } catch (e) {
+      wrap.className = "embed embed-error";
+      wrap.textContent = `${this.kind} could not be rendered: ${e.message}`;
+    }
+    return wrap;
+  }
+}
+
+class ImageWidget extends WidgetType {
+  constructor(url, alt) { super(); this.url = url; this.alt = alt; }
+  eq(other) { return other.url === this.url && other.alt === this.alt; }
+  toDOM() {
+    const wrap = document.createElement("div");
+    wrap.className = "embed embed-image";
+    // http(s) and data: only — no javascript: or file: URLs from a shared doc
+    if (!/^(https?:|data:image\/)/i.test(this.url)) {
+      wrap.className = "embed embed-error";
+      wrap.textContent = "image blocked: only http(s) and data:image URLs render";
+      return wrap;
+    }
+    const img = document.createElement("img");
+    img.src = this.url;
+    img.alt = this.alt || "";
+    img.loading = "lazy";
+    img.onerror = () => {
+      wrap.className = "embed embed-error";
+      wrap.textContent = "image failed to load: " + this.url;
+    };
+    wrap.appendChild(img);
+    return wrap;
+  }
+}
+
+const RENDERABLE = { svg: "svg", html: "html", xml: "svg" };
+
+// Block-level decorations must come from a StateField — CodeMirror refuses them
+// from a ViewPlugin, because block geometry has to be known before layout.
+function buildBlocks(state) {
+  const widgets = [];
+  const touched = (from, to) =>
+    state.selection.ranges.some((r) => r.to >= from - 1 && r.from <= to + 1);
+
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (node.name === "FencedCode") {
+        const text = state.doc.sliceString(node.from, node.to);
+        const m = text.match(/^```+[ \t]*([A-Za-z0-9_-]*)[ \t]*\n([\s\S]*?)\n?```+[ \t]*$/);
+        if (!m) return;
+        const lang = (m[1] || "").toLowerCase();
+        if (touched(node.from, node.to)) return;
+        if (lang === "mermaid") {
+          widgets.push(
+            Decoration.replace({ widget: new MermaidWidget(m[2]), block: true })
+              .range(node.from, node.to),
+          );
+          return;
+        }
+        const kind = RENDERABLE[lang];
+        if (!kind) return;
+        widgets.push(
+          Decoration.replace({ widget: new MarkupWidget(m[2], kind), block: true })
+            .range(node.from, node.to),
+        );
+      } else if (node.name === "Image") {
+        if (touched(node.from, node.to)) return;
+        const raw = state.doc.sliceString(node.from, node.to);
+        const m = raw.match(/^!\[([^\]]*)\]\(([^)\s]+)/);
+        if (!m) return;
+        widgets.push(
+          Decoration.replace({ widget: new ImageWidget(m[2], m[1]), block: true })
+            .range(node.from, node.to),
+        );
+      }
+    },
+  });
+  return Decoration.set(widgets, true);
+}
+
+const renderBlocks = StateField.define({
+  create: (state) => buildBlocks(state),
+  update(deco, tr) {
+    if (tr.docChanged || tr.selection) return buildBlocks(tr.state);
+    return deco.map(tr.changes);
+  },
+  provide: (f) => [
+    EditorView.decorations.from(f),
+    // treat a rendered block as one unit for cursor movement and deletion
+    EditorView.atomicRanges.of((view) => view.state.field(f)),
+  ],
+});
+
 const theme = EditorView.theme({
   "&": { height: "100%", fontSize: "16px", backgroundColor: "transparent", color: "var(--ink)" },
   "&.cm-focused": { outline: "none" },
@@ -171,6 +350,17 @@ const theme = EditorView.theme({
   ".cm-line": { padding: "0" },
   ".cm-activeLine": { backgroundColor: "transparent" },
   ".cm-selectionBackground, ::selection": { backgroundColor: "var(--accent-bg) !important" },
+  ".embed": {
+    margin: "1.1rem 0", padding: "1rem", borderRadius: "4px",
+    background: "var(--card)", border: "1px solid var(--rule)",
+    display: "flex", justifyContent: "center", cursor: "pointer",
+  },
+  ".embed svg, .embed img": { maxWidth: "100%", height: "auto", display: "block" },
+  ".embed-html": { display: "block", fontFamily: "var(--sans)", fontSize: "0.9rem" },
+  ".embed-error": {
+    display: "block", fontFamily: "var(--mono)", fontSize: "0.7rem",
+    color: "#b0453f", background: "transparent", borderStyle: "dashed",
+  },
   ".cm-ySelectionInfo": {
     fontFamily: "var(--mono)", fontSize: "0.62rem", fontWeight: "500",
     padding: "1px 4px", opacity: "1", top: "-1.35em", borderRadius: "2px",
@@ -194,6 +384,7 @@ const view = new EditorView({
       markdown({ base: markdownLanguage }),
       syntaxHighlighting(liveStyle),
       hideMarkers,
+      renderBlocks,
       theme,
       yCollab(content, awareness, { undoManager }),
     ],
