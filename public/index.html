@@ -71,6 +71,8 @@
   }
   button:hover { opacity: .9; }
   button.ghost { background: transparent; color: var(--soft); border-color: var(--rule); }
+  #sendclaude { background: var(--claude); border-color: var(--claude); margin-right: .4rem; }
+  #sendclaude[disabled] { opacity: .4; cursor: default; }
   button.small { padding: .22rem .5rem; font-size: .62rem; margin-top: .5rem; }
 
   /* ---- layout ---- */
@@ -244,6 +246,7 @@
   </div>
   <span class="grow"></span>
   <div id="people"></div>
+  <button id="sendclaude" disabled>send to claude</button>
   <button class="ghost" id="rename">name</button>
 </header>
 

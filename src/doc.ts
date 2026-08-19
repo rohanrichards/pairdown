@@ -28,6 +28,8 @@ export const DOC_PATH = process.env.SPEC_ROOM_DOC ?? join(ROOT, "data", "doc.bin
 export const doc = new Y.Doc();
 export const content = doc.getText("content");
 export const comments = doc.getArray<Y.Map<unknown>>("comments");
+// room-level state that is not the document text (currently the review request)
+export const meta = doc.getMap<any>("meta");
 
 if (existsSync(DOC_PATH)) {
   Y.applyUpdate(doc, new Uint8Array(readFileSync(DOC_PATH)));

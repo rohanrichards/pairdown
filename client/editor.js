@@ -41,6 +41,9 @@ let ME = askName(false);
 const doc = new Y.Doc();
 const content = doc.getText("content");
 const comments = doc.getArray("comments");
+// Room-level state that is not the document: currently just the review request
+// that pulls the agent in. Kept in the CRDT so every client sees the same thing.
+const meta = doc.getMap("meta");
 const awareness = new Awareness(doc);
 
 awareness.setLocalStateField("user", {
@@ -971,7 +974,7 @@ function layoutCards() {
     const empty = document.createElement("p");
     empty.className = "cmt-empty";
     empty.innerHTML =
-      "Select any text to comment on it.<br>Mention <b>@claude</b> to ask the attached session.";
+      "Select any text to comment on it.<br>Nothing reaches the agent until you press <b>send to claude</b>.";
     host.appendChild(empty);
   }
 
@@ -1094,7 +1097,7 @@ function openPanel(id) {
   const form = document.createElement("div");
   form.className = "panel-reply";
   const ta = document.createElement("textarea");
-  ta.placeholder = "Reply. Mention @claude to ask the attached session.";
+  ta.placeholder = "Reply. Press send to claude when your review pass is done.";
   form.appendChild(ta);
   const send = document.createElement("button");
   send.textContent = "Reply";
@@ -1189,6 +1192,55 @@ el("cadd").onclick = () => {
 // ---- keep the margin in step with the document ------------------------------
 
 comments.observeDeep(scheduleLayout);
+
+// ---- pulling the agent in ---------------------------------------------------
+// Comments are silent. Nothing reaches the attached session until someone presses
+// send, so a person can read the whole document and leave twenty notes without
+// the agent rewriting paragraphs underneath them. One press delivers the batch.
+
+function pendingForAgent() {
+  const out = [];
+  for (const m of comments) {
+    if (m.get("resolved")) continue;
+    const replies = m.get("replies");
+    const last = replies && replies.length ? replies.get(replies.length - 1) : null;
+    const who = last ? last.author : m.get("author");
+    if (isAgent(who)) continue;
+    out.push(m.get("id"));
+  }
+  return out;
+}
+
+function refreshSend() {
+  const btn = el("sendclaude");
+  if (!btn) return;
+  const n = pendingForAgent().length;
+  btn.disabled = n === 0;
+  btn.textContent = n === 0 ? "send to claude" : `send to claude · ${n}`;
+  btn.title =
+    n === 0
+      ? "Leave comments first. Nothing is sent to the agent until you press this."
+      : `Send ${n} comment${n === 1 ? "" : "s"} to the attached session in one go`;
+}
+
+function sendToClaude() {
+  const ids = pendingForAgent();
+  if (!ids.length) return;
+  meta.set("review", {
+    id: Math.random().toString(36).slice(2) + Date.now().toString(36),
+    by: ME,
+    at: new Date().toISOString(),
+    count: ids.length,
+  });
+  const btn = el("sendclaude");
+  btn.disabled = true;
+  btn.textContent = "sent";
+  setTimeout(refreshSend, 2500);
+}
+
+el("sendclaude").onclick = sendToClaude;
+comments.observeDeep(refreshSend);
+refreshSend();
 view.scrollDOM.addEventListener("scroll", scheduleLayout, { passive: true });
 window.addEventListener("resize", scheduleLayout);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePanel(); });
