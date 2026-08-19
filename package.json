@@ -1,0 +1,15 @@
+{
+  "name": "spec-room",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Spike: a collaborative spec document with an attached Claude Code session",
+  "scripts": {
+    "serve": "bun run src/server.ts",
+    "mcp": "bun run src/mcp.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "yjs": "^13.6.32"
+  }
+}

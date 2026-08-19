@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "spec-room": {
+      "command": "bun",
+      "args": ["run", "F:/Documents/GitHub/spec-room/src/mcp.ts"]
+    }
+  }
+}
