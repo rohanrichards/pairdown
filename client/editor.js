@@ -11,6 +11,7 @@ import DOMPurify from "dompurify";
 import { EditorState, RangeSetBuilder, StateField, StateEffect } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { Table, Strikethrough, TaskList } from "@lezer/markdown";
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 import { yCollab } from "y-codemirror.next";
@@ -356,6 +357,122 @@ const RENDERABLE = { svg: "svg", html: "html", xml: "svg" };
 
 // Block-level decorations must come from a StateField — CodeMirror refuses them
 // from a ViewPlugin, because block geometry has to be known before layout.
+// ---- tables -----------------------------------------------------------------
+// GFM tables are parsed (the Table extension above) and then replaced with a real
+// HTML table, the same way diagrams are: rendered while the cursor is elsewhere,
+// reverting to pipes the moment you click into it. Without this a spec full of
+// tables reads as a wall of punctuation, which rather defeats the point.
+
+/** Split one markdown table row into cells, honouring escaped pipes. */
+function splitRow(line) {
+  const cells = [];
+  let cur = "";
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === "\\" && line[i + 1] === "|") { cur += "|"; i++; continue; }
+    if (ch === "|") { cells.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  cells.push(cur);
+  if (cells.length && cells[0].trim() === "") cells.shift();
+  if (cells.length && cells[cells.length - 1].trim() === "") cells.pop();
+  return cells.map((c) => c.trim());
+}
+
+const ALIGN = (spec) => {
+  const s = spec.trim();
+  const l = s.startsWith(":"), r = s.endsWith(":");
+  return l && r ? "center" : r ? "right" : "left";
+};
+
+/** The small subset of inline markdown worth honouring inside a cell. */
+function inlineHTML(src) {
+  const esc = src
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return esc
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
+    .replace(/~~([^~]+)~~/g, "<del>$1</del>");
+}
+
+class TableWidget extends WidgetType {
+  constructor(source) { super(); this.source = source; this.key = "table:" + source; }
+  eq(other) { return other.source === this.source; }
+  ignoreEvent() { return false; }
+  get estimatedHeight() {
+    const rows = this.source.split("\n").filter((l) => l.trim()).length;
+    return BLOCK_HEIGHTS.get(this.key) ?? Math.max(80, rows * 38 + 24);
+  }
+  toDOM(view) {
+    const wrap = document.createElement("div");
+    wrap.className = "embed embed-table";
+    const shell = blockShell(wrap);
+    remeasureOnResize(shell, view, this.key);
+    try {
+      const lines = this.source.split("\n").filter((l) => l.trim() !== "");
+      if (lines.length < 2) throw new Error("not a table");
+      const head = splitRow(lines[0]);
+      const align = splitRow(lines[1]).map(ALIGN);
+      const body = lines.slice(2).map(splitRow);
+      const cell = (tag, text, i) =>
+        "<" + tag + ' style="text-align:' + (align[i] || "left") + '">' +
+        inlineHTML(text) + "</" + tag + ">";
+      const html =
+        "<table><thead><tr>" +
+        head.map((h, i) => cell("th", h, i)).join("") +
+        "</tr></thead><tbody>" +
+        body.map((r) => "<tr>" + r.map((c, i) => cell("td", c, i)).join("") + "</tr>").join("") +
+        "</tbody></table>";
+      wrap.innerHTML = DOMPurify.sanitize(html, CLEAN);
+    } catch (e) {
+      wrap.className = "embed embed-error";
+      wrap.textContent = "table could not be rendered: " + e.message;
+    }
+    return shell;
+  }
+}
+
+// ---- block rhythm -----------------------------------------------------------
+// Headings and rules need air around them or the document reads as one slab.
+// This is padding on the line, never margin: CodeMirror measures a line's height
+// from its element, and padding is included where margin is not.
+
+const BLOCK_LINE = {
+  ATXHeading1: "cm-h1", ATXHeading2: "cm-h2", ATXHeading3: "cm-h3",
+  ATXHeading4: "cm-h4", ATXHeading5: "cm-h4", ATXHeading6: "cm-h4",
+  HorizontalRule: "cm-hr", Blockquote: "cm-quote",
+};
+
+function buildLineStyles(state) {
+  const builder = new RangeSetBuilder();
+  const marks = [];
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      const cls = BLOCK_LINE[node.name];
+      if (!cls) return;
+      const line = state.doc.lineAt(node.from);
+      marks.push([line.from, cls]);
+    },
+  });
+  marks.sort((a, b) => a[0] - b[0]);
+  let last = -1;
+  for (const [pos, cls] of marks) {
+    if (pos === last) continue;
+    last = pos;
+    builder.add(pos, pos, Decoration.line({ class: cls }));
+  }
+  return builder.finish();
+}
+
+const lineStyles = StateField.define({
+  create: (state) => buildLineStyles(state),
+  update(deco, tr) {
+    return tr.docChanged ? buildLineStyles(tr.state) : deco.map(tr.changes);
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
 function buildBlocks(state) {
   const widgets = [];
   const touched = (from, to) =>
@@ -380,6 +497,12 @@ function buildBlocks(state) {
         if (!kind) return;
         widgets.push(
           Decoration.replace({ widget: new MarkupWidget(m[2], kind), block: true })
+            .range(node.from, node.to),
+        );
+      } else if (node.name === "Table") {
+        if (touched(node.from, node.to)) return;
+        widgets.push(
+          Decoration.replace({ widget: new TableWidget(state.doc.sliceString(node.from, node.to)), block: true })
             .range(node.from, node.to),
         );
       } else if (node.name === "Image") {
@@ -438,6 +561,36 @@ const theme = EditorView.theme({
     display: "block", fontFamily: "var(--mono)", fontSize: "0.7rem",
     color: "#b0453f", background: "transparent", borderStyle: "dashed",
   },
+  ".cm-h1": { paddingTop: "1.5rem", paddingBottom: "0.35rem" },
+  ".cm-h2": { paddingTop: "1.9rem", paddingBottom: "0.3rem" },
+  ".cm-h3": { paddingTop: "1.3rem", paddingBottom: "0.2rem" },
+  ".cm-h4": { paddingTop: "1rem" },
+  ".cm-hr": { paddingTop: "0.6rem", paddingBottom: "0.6rem" },
+  ".cm-quote": { paddingLeft: "0.9rem", borderLeft: "2px solid var(--rule)" },
+  ".embed-table": {
+    display: "block", padding: "0", background: "transparent",
+    border: "none", cursor: "pointer", overflowX: "auto",
+  },
+  ".embed-table table": {
+    borderCollapse: "collapse", width: "100%",
+    fontFamily: "var(--sans)", fontSize: "0.82rem", lineHeight: "1.45",
+  },
+  ".embed-table th": {
+    textAlign: "left", fontWeight: "650", color: "var(--soft)",
+    fontFamily: "var(--mono)", fontSize: "0.62rem", letterSpacing: "0.09em",
+    textTransform: "uppercase", padding: "0 0.7rem 0.45rem 0",
+    borderBottom: "1px solid var(--rule)", whiteSpace: "nowrap",
+  },
+  ".embed-table td": {
+    padding: "0.5rem 0.7rem 0.5rem 0", verticalAlign: "top",
+    borderBottom: "1px solid var(--rule)", color: "var(--ink)",
+  },
+  ".embed-table tr:last-child td": { borderBottom: "none" },
+  ".embed-table code": {
+    fontFamily: "var(--mono)", fontSize: "0.86em",
+    background: "var(--accent-bg)", color: "var(--accent-ink)",
+    padding: "0.05em 0.3em", borderRadius: "3px",
+  },
   ".cm-ySelectionInfo": {
     fontFamily: "var(--mono)", fontSize: "0.62rem", fontWeight: "500",
     padding: "1px 4px", opacity: "1", top: "-1.35em", borderRadius: "2px",
@@ -476,9 +629,10 @@ const view = new EditorView({
       highlightActiveLine(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.lineWrapping,
-      markdown({ base: markdownLanguage }),
+      markdown({ base: markdownLanguage, extensions: [Table, Strikethrough, TaskList] }),
       syntaxHighlighting(liveStyle),
       hideMarkers,
+      lineStyles,
       renderBlocks,
       highlightField,
       theme,
