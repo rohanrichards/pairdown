@@ -190,6 +190,46 @@ const CLEAN = {
   FORBID_ATTR: ["srcdoc", "formaction", "ping"],
 };
 
+// An html block is rendered into a shadow root, so it may carry its own <style>
+// element. That is the difference between a flat picture and something that
+// responds to a pointer: :hover, :focus and transitions cannot be expressed in a
+// style attribute at all. Shadow DOM scopes those rules to the one block, so a
+// diagram cannot restyle or hide the application around it — which is the reason
+// a <style> tag is not simply allowed inline.
+// Custom properties inherit through a shadow boundary, so the palette still
+// reaches the block. Everything else has to be handed over deliberately.
+const SHADOW_BASE = `:host{all:initial;display:block;font-family:var(--sans);` +
+  `font-size:0.9rem;line-height:1.5;color:var(--ink)}` +
+  `*,*::before,*::after{box-sizing:border-box}`;
+
+// DOMPurify drops <style> even with ADD_TAGS, so the CSS is lifted out before
+// the markup is sanitised and handled on its own terms. That is safe here only
+// because the result goes into a shadow root: the rules cannot reach the
+// application around the block, so what is left to guard against is CSS that
+// talks to the network or resurrects legacy script vectors.
+const CSS_FILTERS = [
+  [/@import[^;]*;?/gi, ""],
+  [/expression\s*\(/gi, "("],
+  [/behaviou?r\s*:/gi, "x:"],
+  [/url\(\s*(?!["']?data:image\/)[^)]*\)/gi, "none"],
+];
+
+function safeCss(css) {
+  let out = css;
+  for (const [re, to] of CSS_FILTERS) out = out.replace(re, to);
+  return out;
+}
+
+/** Split an html block into its style rules and the markup around them. */
+function splitStyles(source) {
+  const css = [];
+  const html = source.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (_, body) => {
+    css.push(body);
+    return "";
+  });
+  return { html, css: safeCss(css.join("\n")) };
+}
+
 // CodeMirror needs a height for a replaced block *before* it renders one, and
 // gets it wrong for a diagram — the height map then drifts from the real layout
 // and clicks land low, accumulating one block at a time. Cache what each block
@@ -316,8 +356,20 @@ class MarkupWidget extends WidgetType {
     const shell = blockShell(wrap);
     remeasureOnResize(shell, view, this.key);
     try {
-      wrap.innerHTML = DOMPurify.sanitize(this.source, CLEAN);
-      if (!wrap.innerHTML.trim()) throw new Error("nothing left after sanitising");
+      if (this.kind === "html") {
+        const { html, css } = splitStyles(this.source);
+        const root = wrap.attachShadow({ mode: "open" });
+        const sheet = document.createElement("style");
+        sheet.textContent = SHADOW_BASE + "\n" + css;
+        root.appendChild(sheet);
+        const holder = document.createElement("div");
+        holder.innerHTML = DOMPurify.sanitize(html, CLEAN);
+        if (!holder.innerHTML.trim()) throw new Error("nothing left after sanitising");
+        root.appendChild(holder);
+      } else {
+        wrap.innerHTML = DOMPurify.sanitize(this.source, CLEAN);
+        if (!wrap.innerHTML.trim()) throw new Error("nothing left after sanitising");
+      }
     } catch (e) {
       wrap.className = "embed embed-error";
       wrap.textContent = `${this.kind} could not be rendered: ${e.message}`;
