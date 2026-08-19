@@ -7,7 +7,11 @@
 // break the moment the document is restructured.
 import * as Y from "yjs";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+
+// Claude Code may spawn this from any working directory, so paths resolve
+// from the project root rather than the cwd.
+const ROOT = dirname(import.meta.dir);
 
 const SEED = `# Untitled spec
 
@@ -19,7 +23,7 @@ one with the repository open — to answer or make the change.
 `;
 
 
-export const DOC_PATH = process.env.SPEC_ROOM_DOC ?? "data/doc.bin";
+export const DOC_PATH = process.env.SPEC_ROOM_DOC ?? join(ROOT, "data", "doc.bin");
 
 export const doc = new Y.Doc();
 export const content = doc.getText("content");

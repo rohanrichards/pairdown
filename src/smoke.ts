@@ -9,9 +9,13 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import * as Y from "yjs";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+// resolve from the project root so this runs from any working directory
+const ROOT = dirname(import.meta.dir);
 
 const PORT = 8800 + Math.floor(Math.random() * 90);
-const DOC = `data/smoke-${PORT}.bin`;
+const DOC = join(ROOT, "data", `smoke-${PORT}.bin`);
 
 const HUMAN_LINE = "Written by a person before the agent touched anything.";
 const TARGET = "## Section the agent should expand";
@@ -44,7 +48,7 @@ const TARGET = "## Section the agent should expand";
     doc.getArray("comments").push([m]);
   });
 
-  mkdirSync("data", { recursive: true });
+  mkdirSync(join(ROOT, "data"), { recursive: true });
   writeFileSync(DOC, Y.encodeStateAsUpdate(doc));
 }
 
@@ -57,7 +61,7 @@ function check(label: string, cond: boolean, detail = "") {
 
 const transport = new StdioClientTransport({
   command: "bun",
-  args: ["run", "src/mcp.ts"],
+  args: ["run", join(ROOT, "src", "mcp.ts")],
   env: { ...process.env, SPEC_ROOM_PORT: String(PORT), SPEC_ROOM_DOC: DOC },
 });
 const client = new Client({ name: "smoke", version: "0.0.1" }, { capabilities: {} });

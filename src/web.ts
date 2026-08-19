@@ -7,6 +7,9 @@
 import * as Y from "yjs";
 import { doc } from "./doc";
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+const INDEX = join(dirname(import.meta.dir), "public", "index.html");
 
 type Sock = { send: (d: any) => void; data: { id: number } };
 
@@ -38,7 +41,7 @@ doc.on("update", (update: Uint8Array, origin: unknown) => {
 });
 
 export function startWeb(port: number) {
-  const html = () => readFileSync("public/index.html", "utf8");
+  const html = () => readFileSync(INDEX, "utf8");
 
   const server = Bun.serve({
     port,
