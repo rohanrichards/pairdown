@@ -5,8 +5,9 @@ every spec. People open a link and edit together, in the same document, at the
 same time. A Claude Code session can be invited in; it reads and writes through
 the same connection the browser uses, and answers comments in the margin.
 
-Ships as a Claude Code plugin. The cost is that the document moves out of the
-agent's process, which is most of the work described below.
+It works in a browser with nothing installed. The Claude Code plugin is how a
+session joins a room, and is optional. The cost of all this is that the document
+moves out of the agent's process, which is most of the work described below.
 
 ## The room server owns the document
 
