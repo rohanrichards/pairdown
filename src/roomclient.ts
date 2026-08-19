@@ -4,7 +4,8 @@
 // "remote" origin on applyUpdate keeps that from becoming an echo loop, since
 // the update handler below drops anything tagged with it.
 import * as Y from "yjs";
-import { tag, untag, DOC_MSG } from "./frames";
+import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from "y-protocols/awareness";
+import { tag, untag, DOC_MSG, AWARE_MSG } from "./frames";
 import { locate } from "./room";
 
 export class RoomClient {
@@ -12,11 +13,17 @@ export class RoomClient {
   readonly content = this.doc.getText("content");
   readonly comments = this.doc.getArray<Y.Map<unknown>>("comments");
   readonly meta = this.doc.getMap<any>("meta");
+  readonly awareness = new Awareness(this.doc);
 
   private constructor(private ws: WebSocket, readonly roomId: string) {
     this.doc.on("update", (update: Uint8Array, origin: unknown) => {
       if (origin === "remote") return;
       this.ws.send(tag(DOC_MSG, update));
+    });
+    this.awareness.on("update", ({ added, updated, removed }: any, origin: unknown) => {
+      if (origin === "remote") return;
+      const changed = added.concat(updated, removed);
+      this.ws.send(tag(AWARE_MSG, encodeAwarenessUpdate(this.awareness, changed)));
     });
   }
 
@@ -28,9 +35,12 @@ export class RoomClient {
       let settled = false;
       ws.onmessage = (e) => {
         const { kind, payload } = untag(new Uint8Array(e.data as ArrayBuffer));
-        if (kind !== DOC_MSG) return;
-        Y.applyUpdate(client.doc, payload, "remote");
-        if (!settled) { settled = true; resolve(client); }
+        if (kind === DOC_MSG) {
+          Y.applyUpdate(client.doc, payload, "remote");
+          if (!settled) { settled = true; resolve(client); }
+        } else if (kind === AWARE_MSG) {
+          applyAwarenessUpdate(client.awareness, payload, "remote");
+        }
       };
       ws.onerror = () => { if (!settled) reject(new Error("cannot reach the room server")); };
     });
@@ -53,5 +63,20 @@ export class RoomClient {
     this.content.insert(this.content.length, (this.content.length ? "\n\n" : "") + markdown);
   }
 
-  close() { this.ws.close(); }
+  insertAfter(needle: string, markdown: string) {
+    const hit = locate(this.text(), needle);
+    if (hit.at === -1) return { ok: false, reason: hit.reason };
+    this.content.insert(hit.at + hit.len, markdown);
+    return { ok: true };
+  }
+
+  /** Publish this client's presence (e.g. `{ busy }`) under the "agent" awareness field, so the browser can tell an attached agent from a human "user" state. */
+  setPresence(fields: Record<string, unknown>) {
+    this.awareness.setLocalStateField("agent", fields);
+  }
+
+  close() {
+    this.awareness.destroy();
+    this.ws.close();
+  }
 }

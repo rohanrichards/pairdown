@@ -43,8 +43,14 @@ export function startWeb(rooms: Rooms, port: number, attempts = 10): { port: num
         port: port + i,
         hostname: "127.0.0.1",
         idleTimeout: 0,
-        fetch(req, srv) {
+        async fetch(req, srv) {
           const url = new URL(req.url);
+
+          if (url.pathname === "/api/rooms" && req.method === "POST") {
+            const body = await req.json().catch(() => null) as { name?: string } | null;
+            const name = (body?.name ?? "").trim() || "Untitled";
+            return Response.json(rooms.create(name));
+          }
 
           if (url.pathname === "/ws") {
             const room = url.searchParams.get("room") ?? "";

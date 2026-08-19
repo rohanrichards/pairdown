@@ -44,6 +44,19 @@ test("an unknown room id is refused rather than silently created", async () => {
   web.stop();
 });
 
+test("posting a name to /api/rooms creates a room and returns its info", async () => {
+  const rooms = new Rooms(join(tmpdir(), `srv-${Math.random().toString(36).slice(2)}`));
+  const web = startWeb(rooms, 8970 + Math.floor(Math.random() * 9))!;
+  const res = await fetch(`http://127.0.0.1:${web.port}/api/rooms`, {
+    method: "POST",
+    body: JSON.stringify({ name: "New room" }),
+  });
+  const info = await res.json();
+  expect(info.name).toBe("New room");
+  expect(rooms.get(info.id)).not.toBeNull();
+  web.stop();
+});
+
 test("a server that cannot bind any port returns null rather than throwing", () => {
   const rooms = new Rooms(join(tmpdir(), `srv-${Math.random().toString(36).slice(2)}`));
   expect(() => {
