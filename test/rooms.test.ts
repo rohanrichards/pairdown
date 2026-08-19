@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { Rooms } from "../src/rooms";
+import { Rooms, newId } from "../src/rooms";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -35,11 +35,10 @@ test("rooms survive a restart of the registry", () => {
   expect(second.get(info.id)!.text()).toContain("# Hello");
 });
 
-test("generated ids are always exactly 8 characters", () => {
-  const rooms = new Rooms(dir());
+test("newId generates exactly 8 characters from [a-z0-9]", () => {
   for (let i = 0; i < 500; i++) {
-    const info = rooms.create(`Room ${i}`);
-    expect(info.id).toMatch(/^[a-z0-9]{8}$/);
-    expect(info.id.length).toBe(8);
+    const id = newId();
+    expect(id).toMatch(/^[a-z0-9]{8}$/);
+    expect(id.length).toBe(8);
   }
 });

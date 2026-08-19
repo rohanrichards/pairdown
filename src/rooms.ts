@@ -6,7 +6,7 @@ export type RoomInfo = { id: string; name: string; createdAt: string; session?: 
 
 // Generate exactly 8 characters from [a-z0-9]
 // Guarantees length by repeatedly calling toString(36) until we have enough characters
-const newId = (): string => {
+export const newId = (): string => {
   let id = "";
   while (id.length < 8) {
     id += Math.random().toString(36).slice(2);
