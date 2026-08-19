@@ -63,7 +63,11 @@ export class Room {
   }
 
   save() {
-    mkdirSync(dirname(this.file), { recursive: true });
-    writeFileSync(this.file, Y.encodeStateAsUpdate(this.doc));
+    try {
+      mkdirSync(dirname(this.file), { recursive: true });
+      writeFileSync(this.file, Y.encodeStateAsUpdate(this.doc));
+    } catch (e) {
+      process.stderr.write(`spec-room: save failed for ${this.file}: ${e}\n`);
+    }
   }
 }
