@@ -132,34 +132,41 @@ const MARKS = new Set([
   "QuoteMark", "LinkMark", "StrikethroughMark",
 ]);
 
-const hideMarkers = ViewPlugin.fromClass(
-  class {
-    constructor(view) { this.decorations = this.build(view); }
-    update(u) { if (u.docChanged || u.selectionSet || u.viewportChanged) this.decorations = this.build(u.view); }
-    build(view) {
-      const builder = new RangeSetBuilder();
-      // Leave every marker visible on the line the cursor is on, so editing the
-      // syntax is still possible — the Obsidian behaviour people expect.
-      const activeLines = new Set();
-      for (const r of view.state.selection.ranges) {
-        activeLines.add(view.state.doc.lineAt(r.head).number);
-        if (r.anchor !== r.head) activeLines.add(view.state.doc.lineAt(r.anchor).number);
-      }
-      for (const { from, to } of view.visibleRanges) {
-        syntaxTree(view.state).iterate({
-          from, to,
-          enter: (node) => {
-            if (!MARKS.has(node.name)) return;
-            if (activeLines.has(view.state.doc.lineAt(node.from).number)) return;
-            if (node.to > node.from) builder.add(node.from, node.to, Decoration.replace({}));
-          },
-        });
-      }
-      return builder.finish();
-    }
+function buildMarkers(state) {
+  const builder = new RangeSetBuilder();
+  // Leave every marker visible on the line the cursor is on, so editing the
+  // syntax is still possible — the Obsidian behaviour people expect.
+  const activeLines = new Set();
+  for (const r of state.selection.ranges) {
+    activeLines.add(state.doc.lineAt(r.head).number);
+    if (r.anchor !== r.head) activeLines.add(state.doc.lineAt(r.anchor).number);
+  }
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (!MARKS.has(node.name)) return;
+      const line = state.doc.lineAt(node.from);
+      if (activeLines.has(line.number)) return;
+      // Never touch a fenced block's own ``` markers — those lines are already
+      // covered by a block replacement.
+      if (node.name === "CodeMark" && line.text.trimStart().startsWith("```")) return;
+      if (node.to > node.from) builder.add(node.from, node.to, Decoration.replace({}));
+    },
+  });
+  return builder.finish();
+}
+
+// A StateField, not a ViewPlugin. Replace decorations coming from two different
+// sources compose in an order CodeMirror does not guarantee, and mixing a field
+// (the blocks) with a plugin (these markers) made click position disagree with
+// coordinate mapping — clicks landed a line low, once per block above them.
+const hideMarkers = StateField.define({
+  create: (state) => buildMarkers(state),
+  update(deco, tr) {
+    if (tr.docChanged || tr.selection) return buildMarkers(tr.state);
+    return deco.map(tr.changes);
   },
-  { decorations: (v) => v.decorations },
-);
+  provide: (f) => EditorView.decorations.from(f),
+});
 
 // ---- visual blocks ----------------------------------------------------------
 // A fenced ```svg or ```html block, and any markdown image, renders in place
@@ -176,6 +183,17 @@ const CLEAN = {
   FORBID_TAGS: ["script", "iframe", "object", "embed", "form", "link", "meta", "base"],
   FORBID_ATTR: ["srcdoc", "formaction", "ping"],
 };
+
+// CodeMirror needs a height for a replaced block *before* it renders one, and
+// gets it wrong for a diagram — the height map then drifts from the real layout
+// and clicks land low, accumulating one block at a time. Cache what each block
+// actually measured and hand it back as the estimate next time.
+const BLOCK_HEIGHTS = new Map();
+const DEFAULT_BLOCK_HEIGHT = { mermaid: 240, svg: 240, html: 180, image: 200 };
+
+function rememberHeight(key, px) {
+  if (px > 0) BLOCK_HEIGHTS.set(key, px);
+}
 
 // Mermaid is loaded on demand — it is by far the largest dependency here, and
 // most documents never contain a diagram.
@@ -215,13 +233,54 @@ function loadMermaid() {
 
 let mermaidSeq = 0;
 
+/**
+ * Keep CodeMirror's height map honest.
+ *
+ * A widget that changes size after it is inserted — a diagram that renders
+ * asynchronously, an image that loads, an SVG that reflows when fonts arrive —
+ * leaves CodeMirror believing the old height. Every click below it then maps to
+ * the wrong document position, which is what made the text near the bottom of a
+ * document with diagrams in it impossible to click accurately.
+ */
+function remeasureOnResize(el, view, key) {
+  if (typeof ResizeObserver === "undefined") return;
+  let last = -1;
+  const ro = new ResizeObserver(() => {
+    const h = el.getBoundingClientRect().height;
+    if (Math.abs(h - last) < 1) return;
+    last = h;
+    rememberHeight(key, h);
+    view?.requestMeasure();
+  });
+  ro.observe(el);
+}
+
+/**
+ * Wrap a rendered block so its spacing is measurable.
+ *
+ * CodeMirror measures a block widget's element height, and that measurement
+ * EXCLUDES margins. A card with vertical margins is therefore taller than
+ * CodeMirror believes, and every position below it drifts — by roughly a line
+ * and a half per block, which is why clicking below three diagrams landed four
+ * lines out. The spacing lives on this outer element as padding instead.
+ */
+function blockShell(inner) {
+  const outer = document.createElement("div");
+  outer.className = "embed-shell";
+  outer.appendChild(inner);
+  return outer;
+}
+
 class MermaidWidget extends WidgetType {
-  constructor(source) { super(); this.source = source; }
+  constructor(source) { super(); this.source = source; this.key = "mermaid:" + source; }
   eq(other) { return other.source === this.source; }
-  toDOM() {
+  get estimatedHeight() { return BLOCK_HEIGHTS.get(this.key) ?? DEFAULT_BLOCK_HEIGHT.mermaid; }
+  toDOM(view) {
     const wrap = document.createElement("div");
     wrap.className = "embed embed-mermaid";
     wrap.textContent = "rendering diagram…";
+    const shell = blockShell(wrap);
+    remeasureOnResize(shell, view, this.key);
     loadMermaid()
       .then((mermaid) => mermaid.render("mmd-" + mermaidSeq++, this.source))
       .then(({ svg }) => {
@@ -229,22 +288,27 @@ class MermaidWidget extends WidgetType {
         // mermaid output is generated from the source, but the source came from
         // a shared document, so it goes through the sanitiser like everything else
         wrap.innerHTML = DOMPurify.sanitize(svg, CLEAN);
+        view?.requestMeasure();
       })
       .catch((e) => {
         wrap.className = "embed embed-error";
         wrap.textContent = "mermaid could not render this: " + (e?.message ?? e);
+        view?.requestMeasure();
       });
-    return wrap;
+    return shell;
   }
 }
 
 class MarkupWidget extends WidgetType {
-  constructor(source, kind) { super(); this.source = source; this.kind = kind; }
+  constructor(source, kind) { super(); this.source = source; this.kind = kind; this.key = kind + ":" + source; }
   eq(other) { return other.source === this.source && other.kind === this.kind; }
   ignoreEvent() { return false; }
-  toDOM() {
+  get estimatedHeight() { return BLOCK_HEIGHTS.get(this.key) ?? DEFAULT_BLOCK_HEIGHT[this.kind] ?? 200; }
+  toDOM(view) {
     const wrap = document.createElement("div");
     wrap.className = "embed embed-" + this.kind;
+    const shell = blockShell(wrap);
+    remeasureOnResize(shell, view, this.key);
     try {
       wrap.innerHTML = DOMPurify.sanitize(this.source, CLEAN);
       if (!wrap.innerHTML.trim()) throw new Error("nothing left after sanitising");
@@ -252,32 +316,37 @@ class MarkupWidget extends WidgetType {
       wrap.className = "embed embed-error";
       wrap.textContent = `${this.kind} could not be rendered: ${e.message}`;
     }
-    return wrap;
+    return shell;
   }
 }
 
 class ImageWidget extends WidgetType {
-  constructor(url, alt) { super(); this.url = url; this.alt = alt; }
+  constructor(url, alt) { super(); this.url = url; this.alt = alt; this.key = "img:" + url; }
   eq(other) { return other.url === this.url && other.alt === this.alt; }
-  toDOM() {
+  get estimatedHeight() { return BLOCK_HEIGHTS.get(this.key) ?? DEFAULT_BLOCK_HEIGHT.image; }
+  toDOM(view) {
     const wrap = document.createElement("div");
     wrap.className = "embed embed-image";
+    const shell = blockShell(wrap);
+    remeasureOnResize(shell, view, this.key);
     // http(s) and data: only — no javascript: or file: URLs from a shared doc
     if (!/^(https?:|data:image\/)/i.test(this.url)) {
       wrap.className = "embed embed-error";
       wrap.textContent = "image blocked: only http(s) and data:image URLs render";
-      return wrap;
+      return shell;
     }
     const img = document.createElement("img");
     img.src = this.url;
     img.alt = this.alt || "";
     img.loading = "lazy";
+    img.onload = () => view?.requestMeasure();
     img.onerror = () => {
       wrap.className = "embed embed-error";
       wrap.textContent = "image failed to load: " + this.url;
+      view?.requestMeasure();
     };
     wrap.appendChild(img);
-    return wrap;
+    return shell;
   }
 }
 
@@ -332,26 +401,32 @@ const renderBlocks = StateField.define({
     if (tr.docChanged || tr.selection) return buildBlocks(tr.state);
     return deco.map(tr.changes);
   },
-  provide: (f) => [
-    EditorView.decorations.from(f),
-    // treat a rendered block as one unit for cursor movement and deletion
-    EditorView.atomicRanges.of((view) => view.state.field(f)),
-  ],
+  // NOTE: deliberately not registering these as atomicRanges. Doing so tells
+  // CodeMirror to push a caret to the far side of each block, which relocates
+  // clicks near a diagram instead of honouring them.
+  provide: (f) => EditorView.decorations.from(f),
 });
 
 const theme = EditorView.theme({
   "&": { height: "100%", fontSize: "16px", backgroundColor: "transparent", color: "var(--ink)" },
   "&.cm-focused": { outline: "none" },
+  // Document padding belongs on .cm-content, never on .cm-scroller. CodeMirror
+  // measures positions relative to the content element, so padding on the
+  // scroller shifts what you see without shifting what it computes — every
+  // click then lands roughly that many pixels low.
   ".cm-scroller": {
-    fontFamily: "var(--serif)", lineHeight: "1.65",
-    padding: "2.6rem 0", overflow: "auto",
+    fontFamily: "var(--serif)", lineHeight: "1.65", overflow: "auto",
   },
-  ".cm-content": { maxWidth: "42rem", margin: "0 auto", padding: "0 1.5rem", caretColor: "var(--ink)" },
+  ".cm-content": {
+    maxWidth: "42rem", margin: "0 auto",
+    padding: "2.6rem 1.5rem", caretColor: "var(--ink)",
+  },
   ".cm-line": { padding: "0" },
   ".cm-activeLine": { backgroundColor: "transparent" },
   ".cm-selectionBackground, ::selection": { backgroundColor: "var(--accent-bg) !important" },
+  ".embed-shell": { padding: "1.1rem 0" },
   ".embed": {
-    margin: "1.1rem 0", padding: "1rem", borderRadius: "4px",
+    margin: "0", padding: "1rem", borderRadius: "4px",
     background: "var(--card)", border: "1px solid var(--rule)",
     display: "flex", justifyContent: "center", cursor: "pointer",
   },
@@ -390,6 +465,10 @@ const view = new EditorView({
     ],
   }),
 });
+
+// Debug handle: lets a test driver (and a console) reach the editor state.
+// Read-only in practice — nothing in the app depends on it.
+window.__specroom = { view, doc, content, comments, awareness };
 
 // ---- who is here ------------------------------------------------------------
 
