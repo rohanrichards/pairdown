@@ -72,7 +72,7 @@ function tagged(tag, payload) {
 }
 
 const el = (id) => document.getElementById(id);
-const DOT = { connected: "on", connecting: "wait", reconnecting: "wait", disconnected: "off" };
+const DOT = { connected: "on", connecting: "wait", reconnecting: "wait" };
 function setStatus(state) {
   el("wsdot").className = "dot " + DOT[state];
   el("wsstate").textContent = state;
@@ -453,7 +453,9 @@ class MarkupWidget extends WidgetType {
       // Anything that still arrives as a <style> — a construction the lift did
       // not recognise — is scoped by the shadow root but was never filtered.
       // Filter it in place rather than trust the regex to have caught it all.
-      for (const el of holder.querySelectorAll("style")) el.textContent = safeCss(el.textContent);
+      for (const leftover of holder.querySelectorAll("style")) {
+        leftover.textContent = safeCss(leftover.textContent);
+      }
       // Before attachShadow, not after: a shadow root on wrap hides the error
       // message the catch below writes into it.
       if (!holder.innerHTML.trim()) throw new Error("nothing left after sanitising");
