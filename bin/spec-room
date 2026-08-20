@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# spec-room — start the room server if it is not already up, then report the URL.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PORT="${SPEC_ROOM_PORT:-8790}"
+if curl -fsS "http://127.0.0.1:${PORT}/api/rooms" >/dev/null 2>&1; then
+  echo "spec-room already running on http://127.0.0.1:${PORT}"
+else
+  nohup bun run "${ROOT}/src/server.ts" >"${ROOT}/data/server.log" 2>&1 &
+  sleep 1
+  echo "spec-room started on http://127.0.0.1:${PORT}"
+fi

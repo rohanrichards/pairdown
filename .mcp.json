@@ -2,7 +2,8 @@
   "mcpServers": {
     "spec-room": {
       "command": "bun",
-      "args": ["run", "F:/Documents/GitHub/spec-room/src/mcp.ts"]
+      "args": ["run", "${CLAUDE_PLUGIN_ROOT}/src/mcp.ts"],
+      "env": { "SPEC_ROOM_URL": "ws://127.0.0.1:8790" }
     }
   }
 }

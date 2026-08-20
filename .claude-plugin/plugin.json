@@ -1,0 +1,5 @@
+{
+  "name": "spec-room",
+  "description": "Collaborative spec rooms with an optional Claude session in them",
+  "version": "0.1.0"
+}
