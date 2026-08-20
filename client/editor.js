@@ -193,17 +193,30 @@ const CLEAN = {
   FORBID_ATTR: ["srcdoc", "formaction", "ping"],
 };
 
-// An html block is rendered into a shadow root, so it may carry its own <style>
-// element. That is the difference between a flat picture and something that
-// responds to a pointer: :hover, :focus and transitions cannot be expressed in a
-// style attribute at all. Shadow DOM scopes those rules to the one block, so a
-// diagram cannot restyle or hide the application around it — which is the reason
-// a <style> tag is not simply allowed inline.
+// Every markup block — html, svg, xml — is rendered into a shadow root, so it
+// may carry its own <style> element. That is the difference between a flat
+// picture and something that responds to a pointer: :hover, :focus and
+// transitions cannot be expressed in a style attribute at all. Shadow DOM scopes
+// those rules to the one block, so a diagram cannot restyle or hide the
+// application around it — which is the reason a <style> tag is not simply
+// allowed inline.
+//
+// svg and xml used to skip this and go straight to innerHTML. DOMPurify allows
+// <style> through (it is in its own html and svg allowlists), and a <style>
+// inside inline SVG sits in the main document tree, where its rules are
+// page-global. A ```svg block could therefore restyle or hide the whole
+// application. FORBID_TAGS is not the answer: mermaid's generated SVG carries
+// its own <style> through this same CLEAN, and forbidding it breaks diagram
+// theming. Containment is.
+//
 // Custom properties inherit through a shadow boundary, so the palette still
-// reaches the block. Everything else has to be handed over deliberately.
+// reaches the block. Everything else has to be handed over deliberately — which
+// includes the image sizing that .embed's own rules gave these blocks before
+// they were behind a boundary.
 const SHADOW_BASE = `:host{all:initial;display:block;font-family:var(--sans);` +
   `font-size:0.9rem;line-height:1.5;color:var(--ink)}` +
-  `*,*::before,*::after{box-sizing:border-box}`;
+  `*,*::before,*::after{box-sizing:border-box}` +
+  `svg,img{max-width:100%;height:auto;display:block}`;
 
 // DOMPurify drops <style> even with ADD_TAGS, so the CSS is lifted out before
 // the markup is sanitised and handled on its own terms. That is safe here only
@@ -223,10 +236,18 @@ function safeCss(css) {
   return out;
 }
 
-/** Split an html block into its style rules and the markup around them. */
+/**
+ * Split a markup block into its style rules and the markup around them.
+ *
+ * The closing tag is optional on purpose. Requiring `</style>` left
+ * `<style>@import url("//host/x.css")` with no close tag unlifted: it reached
+ * DOMPurify, which allows <style>, and applied unfiltered. An unterminated
+ * <style> runs to the end of the block in a real parser too, so lifting it to
+ * the end of the source is also the correct reading.
+ */
 function splitStyles(source) {
   const css = [];
-  const html = source.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (_, body) => {
+  const html = source.replace(/<style\b[^>]*>([\s\S]*?)(?:<\/style\s*>|$)/gi, (_, body) => {
     css.push(body);
     return "";
   });
@@ -389,20 +410,24 @@ class MarkupWidget extends WidgetType {
     const shell = blockShell(wrap, "fence", view);
     remeasureOnResize(shell, view, this.key);
     try {
-      if (this.kind === "html") {
-        const { html, css } = splitStyles(this.source);
-        const root = wrap.attachShadow({ mode: "open" });
-        const sheet = document.createElement("style");
-        sheet.textContent = SHADOW_BASE + "\n" + css;
-        root.appendChild(sheet);
-        const holder = document.createElement("div");
-        holder.innerHTML = DOMPurify.sanitize(html, CLEAN);
-        if (!holder.innerHTML.trim()) throw new Error("nothing left after sanitising");
-        root.appendChild(holder);
-      } else {
-        wrap.innerHTML = DOMPurify.sanitize(this.source, CLEAN);
-        if (!wrap.innerHTML.trim()) throw new Error("nothing left after sanitising");
-      }
+      // One path for every kind. html, svg and xml are all author-written
+      // markup from a document anyone with the link can edit, so all three get
+      // the CSS lift, the filter, and the shadow boundary.
+      const { html, css } = splitStyles(this.source);
+      const holder = document.createElement("div");
+      holder.innerHTML = DOMPurify.sanitize(html, CLEAN);
+      // Anything that still arrives as a <style> — a construction the lift did
+      // not recognise — is scoped by the shadow root but was never filtered.
+      // Filter it in place rather than trust the regex to have caught it all.
+      for (const el of holder.querySelectorAll("style")) el.textContent = safeCss(el.textContent);
+      // Before attachShadow, not after: a shadow root on wrap hides the error
+      // message the catch below writes into it.
+      if (!holder.innerHTML.trim()) throw new Error("nothing left after sanitising");
+      const root = wrap.attachShadow({ mode: "open" });
+      const sheet = document.createElement("style");
+      sheet.textContent = SHADOW_BASE + "\n" + css;
+      root.appendChild(sheet);
+      root.appendChild(holder);
     } catch (e) {
       wrap.className = "embed embed-error";
       wrap.textContent = `${this.kind} could not be rendered: ${e.message}`;
@@ -717,7 +742,15 @@ const theme = EditorView.theme({
   ".cm-line": { padding: "0" },
   ".cm-activeLine": { backgroundColor: "transparent" },
   ".cm-selectionBackground, ::selection": { backgroundColor: "var(--accent-bg) !important" },
-  ".embed-shell": { padding: "1.1rem 0" },
+  // contain is a containment boundary, not decoration. A shadow root scopes
+  // selectors but not layout: :host{position:fixed;inset:0;z-index:9999} in a
+  // block's own CSS overrides SHADOW_BASE's :host, and #editor's
+  // position:relative is not a containing block for a fixed-position
+  // descendant, so the block could paint over the whole application. Layout
+  // containment makes this shell that containing block; paint containment clips
+  // to it. Neither can be reached from inside the shadow tree. Deliberately not
+  // `contain: size` — CodeMirror measures this element's height.
+  ".embed-shell": { padding: "1.1rem 0", contain: "layout paint" },
   // The hover comment toolbar. cm-block marks the hoverable area — either a
   // plain-text line (heading, paragraph, list) or an .embed-shell (diagram,
   // table, image) — and the button lives inside it, revealed on :hover.
