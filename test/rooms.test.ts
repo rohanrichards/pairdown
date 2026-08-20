@@ -35,6 +35,21 @@ test("rename() updates the meta name on an already-open room, so it reaches ever
   expect(room.meta.get("name")).toBe("New name");
 });
 
+test("rename() updates the meta name on a room that was never opened, so it doesn't persist a stale name to disk", () => {
+  const d = dir();
+  const first = new Rooms(d);
+  const info = first.create("Old name");
+
+  // A fresh registry over the same directory, standing in for a server
+  // restart: the room exists on disk but has not been opened by this
+  // instance, so it is absent from its in-memory `open` map.
+  const second = new Rooms(d);
+  expect(second.rename(info.id, "New name")).toBe(true);
+
+  const reopened = second.get(info.id)!;
+  expect(reopened.meta.get("name")).toBe("New name");
+});
+
 test("an unknown room id returns null rather than creating one", () => {
   const rooms = new Rooms(dir());
   expect(rooms.get("nosuchid")).toBeNull();

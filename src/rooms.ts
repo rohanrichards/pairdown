@@ -55,7 +55,9 @@ export class Rooms {
     const info = this.index.find((r) => r.id === id);
     if (!info) return false;
     info.name = name;
-    const room = this.open.get(id);
+    // this.get(), not this.open.get(): a closed room still has meta on disk,
+    // and it must not go on disagreeing with the index once renamed.
+    const room = this.get(id);
     if (room) {
       room.name = name;
       // Live so every connected browser repaints, not just the next join.
