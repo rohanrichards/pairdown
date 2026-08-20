@@ -311,30 +311,40 @@ function remeasureOnResize(el, view, key) {
  * and a half per block, which is why clicking below three diagrams landed four
  * lines out. The spacing lives on this outer element as padding instead.
  */
-function blockShell(inner, kind) {
+function blockShell(inner, kind, view) {
   const outer = document.createElement("div");
   outer.className = "embed-shell cm-block";
   outer.appendChild(inner);
-  outer.appendChild(makeBlockButton(kind));
+  outer.appendChild(makeBlockButton(kind, null, view));
   return outer;
 }
 
 /**
- * The one button the hover toolbar carries for now. It does not open a
- * comment yet — that wiring is a later task's job — it only needs to appear
- * on the block the pointer is over and stay out of the way otherwise.
+ * The one button the hover toolbar carries. It opens the same composer a
+ * text selection does, anchored to the whole block rather than a phrase —
+ * the only way to comment on a diagram or image, since there is no text in
+ * one to select. It needs to appear on the block the pointer is over and
+ * stay out of the way otherwise.
  *
  * blockId, when given, is the id attachBlockButtonHover uses to find this
  * button from any of the block's OTHER lines — see that function for why.
  */
-function makeBlockButton(kind, blockId) {
+function makeBlockButton(kind, blockId, view) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "blockbtn";
   btn.title = "Comment on this " + kind;
   btn.textContent = "comment";
   if (blockId != null) btn.dataset.block = blockId;
-  btn.onclick = (e) => e.stopPropagation();
+  // CodeMirror places the cursor on mousedown, not click — stopping only the
+  // click left that mousedown free to bubble into the editor and land a
+  // selection inside the block, which reverts a rendered diagram or table
+  // back to source the moment its own button is clicked.
+  btn.onmousedown = (e) => e.stopPropagation();
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    openBlockComposer(view, btn);
+  };
   return btn;
 }
 
@@ -346,7 +356,7 @@ class MermaidWidget extends WidgetType {
     const wrap = document.createElement("div");
     wrap.className = "embed embed-mermaid";
     wrap.textContent = "rendering diagram…";
-    const shell = blockShell(wrap, "fence");
+    const shell = blockShell(wrap, "fence", view);
     remeasureOnResize(shell, view, this.key);
     loadMermaid()
       .then((mermaid) => mermaid.render("mmd-" + mermaidSeq++, this.source))
@@ -374,7 +384,7 @@ class MarkupWidget extends WidgetType {
   toDOM(view) {
     const wrap = document.createElement("div");
     wrap.className = "embed embed-" + this.kind;
-    const shell = blockShell(wrap, "fence");
+    const shell = blockShell(wrap, "fence", view);
     remeasureOnResize(shell, view, this.key);
     try {
       if (this.kind === "html") {
@@ -406,7 +416,7 @@ class ImageWidget extends WidgetType {
   toDOM(view) {
     const wrap = document.createElement("div");
     wrap.className = "embed embed-image";
-    const shell = blockShell(wrap, "image");
+    const shell = blockShell(wrap, "image", view);
     remeasureOnResize(shell, view, this.key);
     // http(s) and data: only — no javascript: or file: URLs from a shared doc
     if (!/^(https?:|data:image\/)/i.test(this.url)) {
@@ -483,7 +493,7 @@ class TableWidget extends WidgetType {
   toDOM(view) {
     const wrap = document.createElement("div");
     wrap.className = "embed embed-table";
-    const shell = blockShell(wrap, "table");
+    const shell = blockShell(wrap, "table", view);
     remeasureOnResize(shell, view, this.key);
     try {
       const lines = this.source.split("\n").filter((l) => l.trim() !== "");
@@ -628,7 +638,7 @@ const renderBlocks = StateField.define({
 class BlockButtonWidget extends WidgetType {
   constructor(kind, blockId) { super(); this.kind = kind; this.blockId = blockId; }
   eq(other) { return other.kind === this.kind && other.blockId === this.blockId; }
-  toDOM() { return makeBlockButton(this.kind, this.blockId); }
+  toDOM(view) { return makeBlockButton(this.kind, this.blockId, view); }
 }
 
 function buildBlockToolbar(state) {
@@ -1073,6 +1083,11 @@ function buildCard(c, opts = {}) {
 
   card.appendChild(metaRow(c.author, c.createdAt));
 
+  const scope = document.createElement("span");
+  scope.className = "cmt-scope";
+  scope.textContent = c.map.get("scope") === "block" ? "block" : "quote";
+  card.appendChild(scope);
+
   const note = stateNote(c);
   if (note) {
     const n = document.createElement("div");
@@ -1339,6 +1354,9 @@ function openDetachedPanel() {
 
 const composer = el("composer");
 let pending = null;
+// "quote" from a text selection, "block" from a block's comment button — see
+// the composer's cadd handler below, where it is written onto the map.
+let pendingScope = "quote";
 
 function hideComposer() {
   composer.style.display = "none";
@@ -1349,6 +1367,7 @@ view.dom.addEventListener("mouseup", () => {
   const sel = view.state.selection.main;
   if (sel.empty) { hideComposer(); return; }
   pending = { from: sel.from, to: sel.to };
+  pendingScope = "quote";
   const coords = view.coordsAtPos(sel.head) || view.coordsAtPos(sel.from);
   composer.style.display = "block";
   const top = Math.min((coords ? coords.bottom : 200) + 8, window.innerHeight - 190);
@@ -1357,6 +1376,33 @@ view.dom.addEventListener("mouseup", () => {
     Math.max(16, Math.min(coords ? coords.left : 100, window.innerWidth - 660)) + "px";
   el("ctext").focus();
 });
+
+/**
+ * Opens the same composer a text selection does, but anchored to a whole
+ * block rather than a phrase — this is what a block's comment button (both
+ * the plain-line blockbtn and the widget's blockShell button) wires to.
+ *
+ * The button's own position is found afresh via posAtDOM rather than trusting
+ * anything cached on the widget: a widget can be reused across an edit
+ * (unchanged source keeps the same JS instance, per its eq()), so any from/to
+ * captured at construction time would go stale the moment something above the
+ * block shifted its position. blockRanges is the same source of truth
+ * buildBlockToolbar already uses, so the two agree on where a block starts
+ * and ends.
+ */
+function openBlockComposer(view, btn) {
+  const pos = view.posAtDOM(btn);
+  const block = blockRanges(view.state.doc.toString()).find((b) => pos >= b.from && pos <= b.to);
+  if (!block) return;
+  pending = { from: block.from, to: block.to };
+  pendingScope = "block";
+  const rect = btn.getBoundingClientRect();
+  composer.style.display = "block";
+  const top = Math.min(rect.bottom + 8, window.innerHeight - 190);
+  composer.style.top = Math.max(60, top) + "px";
+  composer.style.left = Math.max(16, Math.min(rect.left, window.innerWidth - 660)) + "px";
+  el("ctext").focus();
+}
 
 el("ccancel").onclick = hideComposer;
 el("cadd").onclick = () => {
@@ -1371,6 +1417,7 @@ el("cadd").onclick = () => {
     m.set("anchorFrom", anchorFor(pending.from));
     m.set("anchorTo", anchorFor(pending.to));
     m.set("resolved", false);
+    m.set("scope", pendingScope);
     m.set("forAgent", /(^|\s)@claude\b/i.test(body));
     m.set("createdAt", new Date().toISOString());
     m.set("replies", new Y.Array());
