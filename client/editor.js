@@ -323,13 +323,17 @@ function blockShell(inner, kind) {
  * The one button the hover toolbar carries for now. It does not open a
  * comment yet — that wiring is a later task's job — it only needs to appear
  * on the block the pointer is over and stay out of the way otherwise.
+ *
+ * blockId, when given, is the id attachBlockButtonHover uses to find this
+ * button from any of the block's OTHER lines — see that function for why.
  */
-function makeBlockButton(kind) {
+function makeBlockButton(kind, blockId) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "blockbtn";
   btn.title = "Comment on this " + kind;
   btn.textContent = "comment";
+  if (blockId != null) btn.dataset.block = blockId;
   btn.onclick = (e) => e.stopPropagation();
   return btn;
 }
@@ -607,35 +611,82 @@ const renderBlocks = StateField.define({
 // ---- hover comment toolbar ---------------------------------------------------
 // One block, one section: blockRanges (client/blocks.js) is a plain scan over
 // the document text, independent of the syntax tree renderBlocks above uses.
-// A diagram, table or image already gets its hover button from blockShell,
-// since those are replaced by a widget that owns its own DOM. Everything
-// else — a heading, a paragraph, a list, a fence not rendered as one of those
-// — is still plain source lines, and gets its button here instead: the first
-// line of the block is given the "cm-block" class plus the button widget, so
-// the same CSS reveals it on hover either way.
+// A diagram, table or image currently rendered as a widget already gets its
+// hover button from blockShell — its whole DOM is one element, so plain CSS
+// hover covers it. Everything else (a heading, a paragraph, a list, a fence
+// not rendered as one of those, or any of those blocks while its source is
+// being edited and hasn't reverted to a widget) is still plain source lines,
+// and gets decorated here instead: every line the block spans carries the
+// "cm-block" class, but the button widget sits on the first line only.
+//
+// A multi-line block's lines are separate DOM siblings, so hovering line two
+// of a paragraph does not trigger CSS :hover on line one — a sibling's
+// descendant is invisible to :hover. Each line instead carries a data-block
+// id shared across the whole block, and attachBlockButtonHover below mirrors
+// the hover state from whichever line the pointer is over onto that block's
+// one button.
 class BlockButtonWidget extends WidgetType {
-  constructor(kind) { super(); this.kind = kind; }
-  eq(other) { return other.kind === this.kind; }
-  toDOM() { return makeBlockButton(this.kind); }
+  constructor(kind, blockId) { super(); this.kind = kind; this.blockId = blockId; }
+  eq(other) { return other.kind === this.kind && other.blockId === this.blockId; }
+  toDOM() { return makeBlockButton(this.kind, this.blockId); }
 }
 
 function buildBlockToolbar(state) {
+  const rendered = state.field(renderBlocks);
   const items = [];
   for (const b of blockRanges(state.doc.toString())) {
-    items.push(Decoration.line({ class: "cm-block" }).range(b.from));
-    items.push(Decoration.widget({ widget: new BlockButtonWidget(b.kind), side: 1 }).range(b.from));
+    // Skip a block renderBlocks is currently replacing with a widget — those
+    // source lines aren't in the DOM at all, so decorating them would either
+    // do nothing or (worse) rely on CodeMirror silently discarding the
+    // overlap. blockShell already gave that widget its own button.
+    let covered = false;
+    rendered.between(b.from, b.to, () => { covered = true; return false; });
+    if (covered) continue;
+
+    const id = String(b.from);
+    for (let pos = b.from; ; ) {
+      const line = state.doc.lineAt(pos);
+      items.push(Decoration.line({ class: "cm-block", attributes: { "data-block": id } }).range(line.from));
+      if (line.to >= b.to) break;
+      pos = line.to + 1;
+    }
+    items.push(Decoration.widget({ widget: new BlockButtonWidget(b.kind, id), side: 1 }).range(b.from));
   }
   return Decoration.set(items, true);
 }
 
 // A StateField, not a ViewPlugin — the same reason renderBlocks above is one.
+// Recomputes on selection too, not just doc changes: which blocks renderBlocks
+// currently covers (the `rendered` lookup above) depends on the cursor —
+// clicking into a table reverts it to raw source without touching the doc.
 const blockToolbar = StateField.define({
   create: (state) => buildBlockToolbar(state),
   update(deco, tr) {
-    return tr.docChanged ? buildBlockToolbar(tr.state) : deco.map(tr.changes);
+    return (tr.docChanged || tr.selection) ? buildBlockToolbar(tr.state) : deco.map(tr.changes);
   },
   provide: (f) => EditorView.decorations.from(f),
 });
+
+/**
+ * Bridge the hover gap CSS can't close: a multi-line block's second and
+ * later lines are DOM siblings of the line holding the button, so hovering
+ * them cannot reveal it through `:hover` alone. This mirrors the hover state
+ * onto the block's actual button by matching the shared data-block id.
+ */
+function attachBlockButtonHover(view) {
+  let active = null;
+  const clear = () => { if (active) { active.classList.remove("blockbtn-hover"); active = null; } };
+  view.dom.addEventListener("mouseover", (e) => {
+    const host = e.target instanceof Element ? e.target.closest("[data-block]") : null;
+    const btn = host ? view.dom.querySelector('.blockbtn[data-block="' + host.dataset.block + '"]') : null;
+    if (btn === active) return;
+    clear();
+    if (btn) { btn.classList.add("blockbtn-hover"); active = btn; }
+  });
+  view.dom.addEventListener("mouseout", (e) => {
+    if (!e.relatedTarget || !(e.relatedTarget instanceof Node) || !view.dom.contains(e.relatedTarget)) clear();
+  });
+}
 
 const theme = EditorView.theme({
   "&": { height: "100%", fontSize: "18px", backgroundColor: "transparent", color: "var(--ink)" },
@@ -669,6 +720,9 @@ const theme = EditorView.theme({
     padding: ".1rem .35rem", cursor: "pointer", zIndex: "1",
   },
   ".cm-block:hover .blockbtn": { opacity: "1" },
+  // Set by attachBlockButtonHover for lines after the block's first, where
+  // plain :hover can't reach the button (see the comment on that function).
+  ".blockbtn.blockbtn-hover": { opacity: "1" },
   ".embed": {
     margin: "0", padding: "1rem", borderRadius: "4px",
     background: "var(--card)", border: "1px solid var(--rule)",
@@ -760,6 +814,7 @@ const view = new EditorView({
     ],
   }),
 });
+attachBlockButtonHover(view);
 
 // Debug handle: lets a test driver (and a console) reach the editor state.
 // Read-only in practice — nothing in the app depends on it.

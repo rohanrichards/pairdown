@@ -55,3 +55,38 @@ test("a tilde-fenced block is one block", () => {
   expect(blocks).toHaveLength(1);
   expect(blocks[0].kind).toBe("fence");
 });
+
+// DELIM_ROW alone matches a bare "---" (every part of it is optional), which
+// would misclassify a paragraph containing a pipe followed by a horizontal
+// rule, or a setext H2 underline, as a table. The candidate delimiter row
+// must itself contain a "|".
+test("a paragraph containing a pipe followed by a bare dash line is not a table", () => {
+  const t = "the plan costs $10 | $20 depending on tier\n---\n";
+  expect(blockRanges(t).map((b) => b.kind)).toEqual(["paragraph"]);
+});
+
+test("an image is its own block", () => {
+  const t = "![a diagram](https://example.com/pic.png)\n";
+  const blocks = blockRanges(t);
+  expect(blocks).toHaveLength(1);
+  expect(blocks[0].kind).toBe("image");
+});
+
+test("a multi-item list is one block", () => {
+  const t = "- one\n- two\n- three\n";
+  const blocks = blockRanges(t);
+  expect(blocks).toHaveLength(1);
+  expect(blocks[0].kind).toBe("list");
+});
+
+test("two consecutive paragraphs separated by a blank line are two blocks", () => {
+  const t = "first paragraph\n\nsecond paragraph\n";
+  expect(blockRanges(t).map((b) => b.kind)).toEqual(["paragraph", "paragraph"]);
+});
+
+test("a colon-aligned delimiter row still makes a table", () => {
+  const t = "| Name | Role |\n|:--:|:--:|\n| Ada | Engineer |\n";
+  const blocks = blockRanges(t);
+  expect(blocks).toHaveLength(1);
+  expect(blocks[0].kind).toBe("table");
+});

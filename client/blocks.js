@@ -8,7 +8,10 @@
 // where the delimiter row is only pipes, colons, hyphens and whitespace — for
 // example `|---|:--:|`. A line that merely contains a bare `|` (a price, a
 // typo) stays a paragraph; only a header line followed by a real delimiter
-// row earns "table".
+// row earns "table". DELIM_ROW alone accepts a bare "---" (every group in it
+// is optional), which would misclassify a setext-style underline or a plain
+// horizontal rule following a line that happens to contain a pipe — so a
+// candidate delimiter row must also contain a "|" itself.
 //
 // Fence open/close is delegated to src/fences.ts rather than reimplemented
 // here: a naive "any ``` line closes it" check misreads a nested fence with a
@@ -41,7 +44,10 @@ export function blockRanges(text) {
     let kind = "paragraph";
     if (/^#{1,6}\s/.test(line)) kind = "heading";
     else if (/^\s*([-*+]|\d+\.)\s/.test(line)) kind = "list";
-    else if (line.includes("|") && i + 1 < lines.length && DELIM_ROW.test(lines[i + 1])) kind = "table";
+    else if (
+      line.includes("|") && i + 1 < lines.length &&
+      lines[i + 1].includes("|") && DELIM_ROW.test(lines[i + 1])
+    ) kind = "table";
     else if (/^!\[[^\]]*\]\(/.test(line)) kind = "image";
 
     let j = i, len = 0;
