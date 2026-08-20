@@ -95,10 +95,40 @@ test("a room name containing HTML is escaped on the index page", async () => {
   web.stop();
 });
 
+// The MCP transport shares this process, so a throw out of startWeb takes the
+// document tools down with it and reaches Claude Code as CONNECTION_CLOSED with
+// no clue why. That contract broke once already. Both tests below hold the port
+// with a real server first: passing attempts = 0 skips the loop body entirely,
+// so nothing is ever bound, nothing contends, and the catch is never entered —
+// which is how this stayed untested through thirteen reviews.
+
+const blockPort = (port: number) =>
+  Bun.serve({ port, hostname: "127.0.0.1", fetch: () => new Response("holding this port") });
+
+test("a port already held is walked past rather than thrown out of", () => {
+  const rooms = new Rooms(join(tmpdir(), `srv-${Math.random().toString(36).slice(2)}`));
+  const port = 8910 + Math.floor(Math.random() * 40);
+  const blocker = blockPort(port);
+  try {
+    let web: ReturnType<typeof startWeb> = null;
+    expect(() => { web = startWeb(rooms, port, 2); }).not.toThrow();
+    expect(web).not.toBeNull();
+    expect(web!.port).toBe(port + 1);
+    web!.stop();
+  } finally {
+    blocker.stop(true);
+  }
+});
+
 test("a server that cannot bind any port returns null rather than throwing", () => {
   const rooms = new Rooms(join(tmpdir(), `srv-${Math.random().toString(36).slice(2)}`));
-  expect(() => {
-    const web = startWeb(rooms, 8990 + Math.floor(Math.random() * 9), 0);
+  const port = 8960 + Math.floor(Math.random() * 9);
+  const blocker = blockPort(port);
+  try {
+    let web: ReturnType<typeof startWeb> = undefined as any;
+    expect(() => { web = startWeb(rooms, port, 1); }).not.toThrow();
     expect(web).toBeNull();
-  }).not.toThrow();
+  } finally {
+    blocker.stop(true);
+  }
 });
