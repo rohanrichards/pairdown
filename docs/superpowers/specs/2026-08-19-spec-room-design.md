@@ -231,12 +231,20 @@ Named so nobody designs around them:
 | Not now | Why it can wait |
 |---|---|
 | Auth, SSO, org identity | The server runs where the team already trusts it |
-| Sharing and permissions | Everyone with the link has the same access |
+| Sharing and permissions | Everyone who can reach the port has the same access |
 | Hosting and deployment | Local first, a tunnel to demo |
 | Density warnings in the client | Nagging a person in their own margin |
 
 Identity is a name a person types. It is not verified, and the UI must not imply
 that it is.
+
+The access model is the port, not the link. The room index at `GET /` lists every
+room on the server with its link, `GET /api/rooms` returns the same as JSON, and
+`POST /api/rooms` creates one — all unauthenticated. Anyone who can reach the
+port has read and write access to every room and can create more, so a link is
+not a capability and must not be described as one. That is the intended
+behaviour bound to `127.0.0.1`; it is the thing to understand before tunnelling
+the port to demo.
 
 ## Detail
 

@@ -60,5 +60,15 @@ drives the whole tool surface end to end.
 ## Deliberately not here
 
 Auth, SSO, sharing and permissions, hosting and deployment. Local first, a
-tunnel to demo. See `docs/superpowers/specs/2026-08-19-spec-room-design.md`
-for the full design.
+tunnel to demo.
+
+Be clear about what that second part means, because there is no auth of any
+kind. `GET /` lists every room on the server with its link, `GET /api/rooms`
+returns the same as JSON, and `POST /api/rooms` creates one — all
+unauthenticated. **The access model is the port, not the link.** That is fine
+while the server is bound to `127.0.0.1`, which is hardcoded and not
+configurable; put a tunnel in front of it and you have handed every room on the
+box, plus unrestricted create and edit, to whoever finds the URL. Demo from a
+tunnel only with rooms you would be content for a stranger to read and rewrite.
+
+See `docs/superpowers/specs/2026-08-19-spec-room-design.md` for the full design.
