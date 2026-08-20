@@ -1,3 +1,5 @@
+import { fenceOpener, closesFence } from "./fences";
+
 export type OutlineEntry = {
   level: number; title: string; words: number; hasDiagram: boolean; offset: number;
 };
@@ -14,18 +16,16 @@ export function outlineOf(text: string): OutlineEntry[] {
     offset += line.length + 1;
 
     // Check for fence line (backticks or tildes)
-    const fenceMatch = line.match(/^(`{3,}|~{3,})/);
-    if (fenceMatch) {
-      const delim = fenceMatch[1];  // the backticks or tildes
-
+    const opener = fenceOpener(line);
+    if (opener) {
       if (fenceDelim === null) {
         // Opening a fence
-        fenceDelim = delim;
+        fenceDelim = opener;
         // Check if this is a diagram fence
         if (DIAGRAM.test(line) && out.length) {
           out[out.length - 1].hasDiagram = true;
         }
-      } else if (delim[0] === fenceDelim[0] && delim.length >= fenceDelim.length) {
+      } else if (closesFence(line, fenceDelim)) {
         // Closing the fence - same character, at least as many
         fenceDelim = null;
       }

@@ -38,3 +38,20 @@ test("a paragraph containing a bare pipe is not classified as a table", () => {
   const t = "the plan costs $10 | $20 depending on tier\nmore prose follows\n";
   expect(blockRanges(t).map((b) => b.kind)).toEqual(["paragraph"]);
 });
+
+// Fence open/close is delegated to src/fences.ts, which matches delimiter
+// character and length rather than treating any ``` line as a close. Both
+// cases outlineOf had to fix once need coverage here too.
+test("a three-backtick fence nested inside a four-backtick fence is one block", () => {
+  const t = "````markdown\n```\n# not a heading\n```\n````\n";
+  const blocks = blockRanges(t);
+  expect(blocks).toHaveLength(1);
+  expect(blocks[0].kind).toBe("fence");
+});
+
+test("a tilde-fenced block is one block", () => {
+  const t = "~~~svg\n<svg></svg>\n~~~\n";
+  const blocks = blockRanges(t);
+  expect(blocks).toHaveLength(1);
+  expect(blocks[0].kind).toBe("fence");
+});

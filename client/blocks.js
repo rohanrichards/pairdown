@@ -9,6 +9,13 @@
 // example `|---|:--:|`. A line that merely contains a bare `|` (a price, a
 // typo) stays a paragraph; only a header line followed by a real delimiter
 // row earns "table".
+//
+// Fence open/close is delegated to src/fences.ts rather than reimplemented
+// here: a naive "any ``` line closes it" check misreads a nested fence with a
+// shorter delimiter and does not recognise ~~~ fences at all — the exact bug
+// outlineOf had and fixed, which is why the rule lives in one shared place.
+import { fenceOpener, closesFence } from "../src/fences";
+
 const DELIM_ROW = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 
 export function blockRanges(text) {
@@ -22,9 +29,10 @@ export function blockRanges(text) {
     const line = lines[i];
     if (!line.trim()) { offset += lineLen(i); i++; continue; }
 
-    if (line.startsWith("```")) {
+    const opener = fenceOpener(line);
+    if (opener) {
       let j = i + 1, len = lineLen(i);
-      while (j < lines.length && !lines[j].startsWith("```")) { len += lineLen(j); j++; }
+      while (j < lines.length && !closesFence(lines[j], opener)) { len += lineLen(j); j++; }
       if (j < lines.length) { len += lineLen(j); j++; }
       out.push({ from: start, to: start + len - 1, kind: "fence" });
       offset += len; i = j; continue;
