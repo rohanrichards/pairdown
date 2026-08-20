@@ -95,6 +95,43 @@ test("a room name containing HTML is escaped on the index page", async () => {
   web.stop();
 });
 
+test("both HTML responses carry a policy that cannot run injected script", async () => {
+  const rooms = new Rooms(join(tmpdir(), `srv-${Math.random().toString(36).slice(2)}`));
+  const info = rooms.create("Header test");
+  const web = startWeb(rooms, 8870 + Math.floor(Math.random() * 9))!;
+
+  const policyFor = async (path: string) => {
+    const res = await fetch(`http://127.0.0.1:${web.port}${path}`);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    const csp = res.headers.get("content-security-policy");
+    expect(csp).not.toBeNull();
+    expect(csp).toContain("default-src 'none'");
+    // Nothing in either page needs eval, and neither may be framed.
+    expect(csp).not.toContain("unsafe-eval");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("base-uri 'none'");
+    return csp!;
+  };
+
+  // The editor's only script is the bundle, so it needs no inline script at
+  // all. The index page is the mirror image: one inline script, no bundle.
+  const editor = await policyFor(`/r/${info.id}`);
+  expect(editor).toContain("script-src 'self'");
+  expect(editor).not.toContain("script-src 'self' 'unsafe-inline'");
+  // Google Fonts is the only remote origin the editor is allowed to reach.
+  expect(editor).toContain("style-src 'self' 'unsafe-inline' https://fonts.googleapis.com");
+  expect(editor).toContain("font-src https://fonts.gstatic.com");
+  // A remote <img> is a feature of this document format, so img-src stays open.
+  expect(editor).toContain("img-src * data:");
+
+  const index = await policyFor("/");
+  expect(index).toContain("script-src 'unsafe-inline'");
+  expect(index).not.toContain("script-src 'unsafe-inline' 'self'");
+
+  web.stop();
+});
+
 // The MCP transport shares this process, so a throw out of startWeb takes the
 // document tools down with it and reaches Claude Code as CONNECTION_CLOSED with
 // no clue why. That contract broke once already. Both tests below hold the port

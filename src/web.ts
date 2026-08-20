@@ -147,6 +147,65 @@ function indexHtml(rooms: RoomInfo[]): string {
 </html>`;
 }
 
+// ---- response headers -------------------------------------------------------
+// Both pages render markup and CSS that anyone holding a room link can write,
+// so the browser is given the narrowest policy each page can actually run under.
+//
+// What the CSP buys and what it does not: `script-src` without 'unsafe-eval' and
+// without any remote origin closes the whole "someone pasted markup into a
+// shared document and it executed" class outright, and `default-src 'none'`
+// means anything not listed below cannot be fetched at all. It does NOT close
+// the CSS containment holes on its own — inline styles are load-bearing here
+// (the page's own <style>, CodeMirror's generated theme, and every html block's
+// lifted <style>), so 'unsafe-inline' has to stay in `style-src` and the shadow
+// root plus `contain` in client/editor.js are still what stop a block from
+// restyling the application. It does close the remote half: an @import or a
+// remote url() that slipped past the CSS filter has nowhere to fetch from.
+//
+// The two pages differ on purpose. The editor's only script is the bundle at
+// /js/editor.js, so it needs no inline script at all; the index page's create
+// form is a small inline <script> and has no bundle, so it is the mirror image.
+const HTML_SECURITY = {
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+};
+
+// img-src is deliberately open: a remote <img> is an accepted feature of this
+// document format, in html blocks and in markdown images alike.
+const EDITOR_CSP = [
+  "default-src 'none'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src https://fonts.gstatic.com",
+  "img-src * data:",
+  "connect-src 'self'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+const INDEX_CSP = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline'",
+  "img-src data:",
+  "connect-src 'self'",
+  "base-uri 'none'",
+  // The form is submitted by fetch, but leave the no-JS fallback reachable.
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+function htmlResponse(body: string, csp: string): Response {
+  return new Response(body, {
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": csp,
+      ...HTML_SECURITY,
+    },
+  });
+}
+
 /**
  * Start the web server, walking forward if the port is taken.
  *
@@ -183,15 +242,13 @@ export function startWeb(rooms: Rooms, port: number, attempts = 10): { port: num
           const m = url.pathname.match(/^\/r\/([a-z0-9]{8})$/);
           if (m) {
             if (!rooms.get(m[1])) return new Response("no such room", { status: 404 });
-            return new Response(html(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+            return htmlResponse(html(), EDITOR_CSP);
           }
 
           if (url.pathname === "/api/rooms") return Response.json(rooms.list());
 
           if (url.pathname === "/" || url.pathname === "/index.html") {
-            return new Response(indexHtml(rooms.list()), {
-              headers: { "Content-Type": "text/html; charset=utf-8" },
-            });
+            return htmlResponse(indexHtml(rooms.list()), INDEX_CSP);
           }
 
           // The client is code-split, so mermaid and friends load only when a
