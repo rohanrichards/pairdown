@@ -12,7 +12,7 @@
 // isolated: a client only ever receives frames published to its own room's
 // topic.
 import * as Y from "yjs";
-import { Rooms } from "./rooms";
+import { Rooms, type RoomInfo } from "./rooms";
 import { tag, untag, DOC_MSG } from "./frames";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -25,6 +25,110 @@ type Sock = { room: string };
 
 function html() {
   return readFileSync(INDEX, "utf8");
+}
+
+// Room names are typed by whoever creates a room and rendered straight into
+// this page's HTML — an unescaped name is stored XSS in a page every
+// collaborator visits.
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === '"' ? "&quot;" : "&#39;",
+  );
+}
+
+function roomRow(r: RoomInfo): string {
+  const created = r.createdAt
+    ? `<time datetime="${escapeHtml(r.createdAt)}">${escapeHtml(r.createdAt.slice(0, 10))}</time>`
+    : "";
+  return `<li class="room">
+    <a class="room-link" href="/r/${r.id}">${escapeHtml(r.name)}</a>
+    ${created}
+    <span class="room-id">${r.id}</span>
+  </li>`;
+}
+
+// The room index: not the editor. It has no CRDT, no build step, and needs
+// no framework — just a list of rooms and a form to create one, styled with
+// the same palette as the editor so the two pages read as one product.
+function indexHtml(rooms: RoomInfo[]): string {
+  const list = rooms.length
+    ? `<ul id="roomlist">${rooms.map(roomRow).join("")}</ul>`
+    : `<p id="empty">No rooms yet — create one below.</p>`;
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spec-room</title>
+<style>
+  :root {
+    --paper: #f1f4f0; --card: #fbfcfa; --ink: #171c19; --soft: #5d6662;
+    --faint: #a8b0ab; --rule: #d5dbd5; --accent: #24479e; --accent-bg: #e7ecf7;
+    --serif: "Newsreader", Georgia, serif;
+    --sans: "Archivo", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #121513; --card: #191d1a; --ink: #e7ebe6; --soft: #99a39d;
+      --faint: #5c655f; --rule: #2a302c; --accent: #9db8ff; --accent-bg: #1b2334;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink);
+    font-family: var(--sans); padding: 3rem 1.2rem; -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 640px; margin: 0 auto; }
+  h1 { font-family: var(--serif); font-weight: 600; font-size: 1.7rem; margin: 0 0 1.6rem; }
+  ul#roomlist { list-style: none; margin: 0 0 2rem; padding: 0; border-top: 1px solid var(--rule); }
+  li.room {
+    display: flex; align-items: baseline; gap: .7rem; padding: .75rem 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .room-link { color: var(--ink); font-weight: 600; text-decoration: none; }
+  .room-link:hover { color: var(--accent); text-decoration: underline; }
+  .room-id, time { font-family: var(--mono); font-size: .7rem; color: var(--faint); }
+  .room-id { margin-left: auto; }
+  #empty { color: var(--soft); margin-bottom: 2rem; }
+  form { display: flex; gap: .5rem; }
+  input {
+    flex: 1; font-family: var(--sans); font-size: .9rem; padding: .55rem .65rem;
+    background: var(--card); color: var(--ink); border: 1px solid var(--rule); border-radius: 3px;
+  }
+  input:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button {
+    font-family: var(--mono); font-size: .78rem; cursor: pointer;
+    background: var(--accent); color: var(--paper); border: 1px solid var(--accent);
+    padding: .55rem .95rem; border-radius: 3px;
+  }
+  button:hover { opacity: .9; }
+</style>
+</head>
+<body>
+<main>
+  <h1>spec&#8202;room</h1>
+  ${list}
+  <form id="create-form">
+    <input id="roomname-input" name="name" placeholder="Room name" autocomplete="off" required>
+    <button type="submit">Create room</button>
+  </form>
+</main>
+<script>
+  document.getElementById("create-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = document.getElementById("roomname-input");
+    const res = await fetch("/api/rooms", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: input.value }),
+    });
+    const room = await res.json();
+    location.href = "/r/" + room.id;
+  });
+</script>
+</body>
+</html>`;
 }
 
 /**
@@ -69,7 +173,9 @@ export function startWeb(rooms: Rooms, port: number, attempts = 10): { port: num
           if (url.pathname === "/api/rooms") return Response.json(rooms.list());
 
           if (url.pathname === "/" || url.pathname === "/index.html") {
-            return new Response(html(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+            return new Response(indexHtml(rooms.list()), {
+              headers: { "Content-Type": "text/html; charset=utf-8" },
+            });
           }
 
           // The client is code-split, so mermaid and friends load only when a

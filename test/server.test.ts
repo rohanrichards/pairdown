@@ -57,6 +57,41 @@ test("posting a name to /api/rooms creates a room and returns its info", async (
   web.stop();
 });
 
+test("GET / serves the room index, not the editor", async () => {
+  const rooms = new Rooms(join(tmpdir(), `srv-${Math.random().toString(36).slice(2)}`));
+  const web = startWeb(rooms, 8830 + Math.floor(Math.random() * 9))!;
+  const res = await fetch(`http://127.0.0.1:${web.port}/`);
+  const body = await res.text();
+  expect(body).toContain('id="create-form"');
+  expect(body).not.toContain('src="/js/editor.js"');
+  web.stop();
+});
+
+test("GET / lists a room created through the registry", async () => {
+  const rooms = new Rooms(join(tmpdir(), `srv-${Math.random().toString(36).slice(2)}`));
+  const info = rooms.create("Weekly Sync");
+  const web = startWeb(rooms, 8840 + Math.floor(Math.random() * 9))!;
+  const res = await fetch(`http://127.0.0.1:${web.port}/`);
+  const body = await res.text();
+  expect(body).toContain("Weekly Sync");
+  expect(body).toContain(`/r/${info.id}`);
+  web.stop();
+});
+
+test("a room name containing HTML is escaped on the index page", async () => {
+  const rooms = new Rooms(join(tmpdir(), `srv-${Math.random().toString(36).slice(2)}`));
+  rooms.create("<script>alert(1)</script>");
+  rooms.create("Tom & Jerry <b>");
+  const web = startWeb(rooms, 8850 + Math.floor(Math.random() * 9))!;
+  const res = await fetch(`http://127.0.0.1:${web.port}/`);
+  const body = await res.text();
+  expect(body).not.toContain("<script>alert(1)</script>");
+  expect(body).not.toContain("Tom & Jerry <b>");
+  expect(body).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+  expect(body).toContain("Tom &amp; Jerry &lt;b&gt;");
+  web.stop();
+});
+
 test("a server that cannot bind any port returns null rather than throwing", () => {
   const rooms = new Rooms(join(tmpdir(), `srv-${Math.random().toString(36).slice(2)}`));
   expect(() => {
