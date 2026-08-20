@@ -21,6 +21,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import * as Y from "yjs";
 import { RoomClient } from "./roomclient";
+import { anchorState } from "./anchor";
 import { outlineOf } from "./outline";
 import type { RoomInfo } from "./rooms";
 
@@ -266,12 +267,30 @@ const TOOLS = [
 
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 
+/**
+ * Where a comment points, in the same three states the browser shows.
+ *
+ * The stored `quote` is what the person was looking at when they commented; the
+ * resolved anchor is what sits there now. Printing the second as the first is
+ * how "Ian commented on «unrelated text»" reaches the model as fact, with an
+ * instruction to act on it — so drift is named rather than hidden.
+ */
+function anchorFor(r: RoomClient, c: CommentView, limit: number) {
+  const a = anchorState(c.from, c.to, c.quote, (f, t) => r.text().slice(f, t));
+  const clip = (s: string) => s.slice(0, limit);
+  if (a.state === "deleted") return "[the text this comment was on is gone]";
+  if (a.state === "changed") {
+    return (
+      `[the text has changed since the comment — was ${JSON.stringify(clip(c.quote ?? ""))}, ` +
+      `now ${JSON.stringify(clip(a.current))}]`
+    );
+  }
+  return JSON.stringify(clip(a.current));
+}
+
 /** Render one comment thread the way every tool that shows comments needs it. */
 function renderThread(r: RoomClient, c: CommentView): string {
-  const where =
-    c.from === null || c.to === null
-      ? "[anchor lost]"
-      : JSON.stringify(r.text().slice(c.from, c.to).slice(0, 80));
+  const where = anchorFor(r, c, 80);
   const replies = c.replies.map((rep) => `      reply <${rep.author}>: ${rep.body}`).join("\n");
   return (
     `  [${c.id}] ${c.author} (${c.scope ?? "quote"})${c.forAgent ? " (@claude)" : ""}${c.resolved ? " (resolved)" : ""} on ${where}\n` +
@@ -448,7 +467,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 // — a reply keeps its thread's id, so deduplicating by id alone would swallow
 // every reply, including ones typed into the panel's own reply box.
 
-type Pending = { id: string; author: string; text: string; quoted: string };
+// `where` is a display string, already quoted or bracketed by anchorFor, and
+// always on one line — every branch of it goes through JSON.stringify, so it is
+// safe to put on a marker line.
+type Pending = { id: string; author: string; text: string; where: string };
 
 // ---- keeping viewer text inside the envelope ---------------------------------
 // Comment bodies and display names are typed by whoever holds the link. Both go
@@ -499,13 +521,12 @@ function pendingState(c: CommentView, requireMention: boolean): Pending | null {
   const msg = newestMessage(c);
   // our own reply is not a request for our attention
   if (msg.author.toLowerCase() === AGENT_NAME.toLowerCase()) return null;
-  const quoted =
-    c.from === null || c.to === null
-      ? "(the text this referred to is gone)"
-      : room!.text().slice(c.from, c.to).slice(0, 200);
+  // Same three states renderThread and the browser use: a notification must not
+  // present drifted text as the passage the person commented on.
+  const where = anchorFor(room!, c, 200);
   // The author is a viewer-typed name and both notifiers put it in a structured
   // line; a newline in it breaks that structure open.
-  return { id: c.id, author: safeName(msg.author), text: msg.text, quoted };
+  return { id: c.id, author: safeName(msg.author), text: msg.text, where };
 }
 
 /** Everything unanswered, tagged or not, in document order. */
@@ -528,7 +549,7 @@ const announced = new Map<string, string>();
 
 function notifyMention(p: Pending, isReply: boolean) {
   room!.setPresence({ busy: true, comment_id: p.id });
-  const { open, close } = fence(`on: ${JSON.stringify(p.quoted)}`);
+  const { open, close } = fence(`on: ${p.where}`);
   mcp
     .notification({
       method: "notifications/claude/channel",
@@ -571,7 +592,7 @@ function notifyBatch(items: Pending[], byRaw: string) {
   room!.setPresence({ busy: true });
   const by = safeName(byRaw);
   const body = items
-    .map((p, i) => `${i + 1}. [${p.id}] ${p.author} on ${JSON.stringify(p.quoted)}\n   ${p.text}`)
+    .map((p, i) => `${i + 1}. [${p.id}] ${p.author} on ${p.where}\n   ${p.text}`)
     .join("\n\n");
   const { open, close } = fence("comments");
   mcp

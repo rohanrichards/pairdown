@@ -79,13 +79,13 @@ test("a comment's scope defaults to quote when absent, and prints on read", asyn
   const anchor = (i: number) =>
     Buffer.from(Y.encodeRelativePosition(Y.createRelativePositionFromTypeIndex(content, i))).toString("base64");
 
-  function seedComment(id: string, scope?: string) {
+  function seedComment(id: string, scope?: string, quote = "paragraph") {
     const m = new Y.Map<unknown>();
     room.doc.transact(() => {
       m.set("id", id);
       m.set("author", "Ian");
       m.set("body", "a note");
-      m.set("quote", "paragraph");
+      m.set("quote", quote);
       m.set("anchorFrom", anchor(0));
       m.set("anchorTo", anchor(content.length));
       m.set("resolved", false);
@@ -100,6 +100,10 @@ test("a comment's scope defaults to quote when absent, and prints on read", asyn
   // No scope field at all — a document written before this feature existed.
   seedComment("legacy");
   seedComment("blocky", "block");
+  // A comment whose stored quote no longer matches what sits at its anchor:
+  // the anchor still resolves, so this is the case that looks correct while
+  // pointing at words nobody commented on.
+  seedComment("drifted", undefined, "a completely different sentence");
 
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -113,6 +117,17 @@ test("a comment's scope defaults to quote when absent, and prints on read", asyn
   const out = text(await client.callTool({ name: "read", arguments: {} }));
   expect(out).toContain("[legacy] Ian (quote)");
   expect(out).toContain("[blocky] Ian (block)");
+
+  // A resolving anchor over text that is no longer the commented text must be
+  // named as drift, not printed as though it were the quoted passage — the
+  // browser has said so since it was written (client/editor.js).
+  expect(out).toContain(
+    'on [the text has changed since the comment — was "a completely different sentence", ' +
+      'now "# Scope test\\n\\na paragraph to comment on"]',
+  );
+  // and the ones that did not drift still read as before
+  expect(out).toContain('[legacy] Ian (quote) on "# Scope test');
+  expect(out).not.toContain("[legacy] Ian (quote) on [the text has changed");
 
   await client.close();
   await transport.close();

@@ -17,6 +17,7 @@ import { tags as t } from "@lezer/highlight";
 import { yCollab } from "y-codemirror.next";
 import { blockRanges } from "./blocks.js";
 import { mountRail } from "./outline-rail.js";
+import { anchorState } from "../src/anchor";
 
 // ---- identity ---------------------------------------------------------------
 
@@ -903,12 +904,10 @@ function setAgentBusy(busy, commentId) {
 //   - Claude's replies get a reserved colour and an icon
 //   - no notifications
 //
-// Three anchor states, not two. A comment can lose its text by deletion, in
-// which case the anchor stops resolving — but it can also lose its text by
-// substitution, where the anchor still resolves perfectly onto whatever now
-// occupies those positions. That second case is the dangerous one: it looks
-// correct while pointing at words nobody commented on. Both are treated as
-// detached, and neither highlights the document.
+// Three anchor states, not two — see src/anchor.ts for why. Both non-ok states
+// are treated as detached here, and neither highlights the document. The
+// comparison itself is shared with the agent's companion rather than
+// re-implemented, so the two clients cannot disagree about what a comment means.
 
 const AGENT = "claude";
 const CARD_GAP = 10;
@@ -928,25 +927,6 @@ function resolveAnchor(a) {
   } catch (e) { return null; }
 }
 
-const squash = (s) => String(s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
-
-/**
- * Has the anchored text changed out from under the comment?
- *
- * Deliberately strict: normalised equality, or one string containing the other
- * so a typo fix or a trimmed edge still counts as the same passage. Anything
- * else is called drift. Over-flagging is the safer failure — a comment marked
- * detached when the text merely moved is a small annoyance, while a comment
- * silently pointing at unrelated words is misinformation.
- */
-function textDrifted(quote, current) {
-  const q = squash(quote), c = squash(current);
-  if (!q) return false;            // nothing to compare against
-  if (!c) return true;             // range collapsed to nothing
-  if (q === c) return false;
-  return !(c.includes(q) || q.includes(c));
-}
-
 function commentViews() {
   const out = [];
   const docText = view.state.doc;
@@ -956,14 +936,10 @@ function commentViews() {
     const replies = m.get("replies");
     const quote = m.get("quote") || "";
 
-    let state = m.get("resolved") ? "resolved" : "open";
-    let current = "";
-    if (from === null || to === null || to <= from) {
-      state = "deleted";
-    } else {
-      current = docText.sliceString(from, Math.min(to, from + 2000));
-      if (textDrifted(quote, current)) state = "changed";
-    }
+    const anchor = anchorState(from, to, quote, (f, t) =>
+      docText.sliceString(f, Math.min(t, f + 2000)));
+    const current = anchor.current;
+    const state = anchor.state === "ok" ? (m.get("resolved") ? "resolved" : "open") : anchor.state;
     const detached = state === "deleted" || state === "changed";
 
     out.push({
