@@ -15,7 +15,7 @@ import { Table, Strikethrough, TaskList } from "@lezer/markdown";
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 import { yCollab } from "y-codemirror.next";
-import { blockRanges, blockAt } from "./blocks.js";
+import { blockRanges } from "./blocks.js";
 import { mountRail } from "./outline-rail.js";
 import { anchorState } from "../src/anchor";
 
@@ -774,12 +774,27 @@ const blockToolbar = StateField.define({
  */
 function attachBlockButtonHover(view) {
   let active = null;
-  const clear = () => { if (active) { active.classList.remove("blockbtn-hover"); active = null; } };
+  let framed = null;
+  const clear = () => {
+    if (active) { active.classList.remove("blockbtn-hover"); active = null; }
+    if (framed) { framed = null; outlineTarget = null; view.dispatch({ effects: bumpOutline.of(null) }); }
+  };
   view.dom.addEventListener("mouseover", (e) => {
-    const host = e.target instanceof Element ? e.target.closest("[data-block]") : null;
-    const btn = host ? view.dom.querySelector('.blockbtn[data-block="' + host.dataset.block + '"]') : null;
+    const el = e.target instanceof Element ? e.target : null;
+    // A widget-rendered block (table, diagram, image) has no data-block lines —
+    // its shell is the block, and framing that covers it with no extra case.
+    const host = el ? el.closest("[data-block], .embed-shell") : null;
+    if (host !== framed) {
+      framed = host;
+      outlineTarget = host;
+      view.dispatch({ effects: bumpOutline.of(null) });
+    }
+    const key = host && host.dataset ? host.dataset.block : undefined;
+    const btn = key !== undefined
+      ? view.dom.querySelector('.blockbtn[data-block="' + key + '"]')
+      : null;
     if (btn === active) return;
-    clear();
+    if (active) { active.classList.remove("blockbtn-hover"); active = null; }
     if (btn) { btn.classList.add("blockbtn-hover"); active = btn; }
   });
   view.dom.addEventListener("mouseout", (e) => {
@@ -787,52 +802,95 @@ function attachBlockButtonHover(view) {
   });
 }
 
-// ---- the active block outline -----------------------------------------------
-// A single element that tracks whichever block holds the caret, drawn as an
-// outline so it costs no layout: a border would shift the text every time it
-// appeared, and margins on block-level things in this file have twice
-// desynchronised CodeMirror's height map and made clicks land low.
+// ---- the hovered block outline ----------------------------------------------
+// Follows the pointer, not the caret: the point is to show which block a click
+// or a comment would land on, before you commit to it.
 //
-// This is a `layer`, the same primitive drawSelection uses. Two properties come
-// free from that and both matter here: the marker is absolutely positioned, so
-// it is outside layout entirely, and RectangleMarker reuses its DOM element
-// when only the geometry changes — which is what lets a CSS transition slide
-// the outline from one block to the next instead of blinking between them.
+// Drawn as an outline in a `layer`, the same primitive drawSelection uses. Two
+// properties of that matter and both are structural rather than careful: the
+// marker is absolutely positioned, so it is outside layout entirely and cannot
+// shift text or desynchronise CodeMirror's height map; and it is
+// pointer-events:none below the text, so it cannot intercept a click. Both
+// hazards have shipped in this file before.
+//
+// Geometry comes from the block's own DOM rather than from the height map. An
+// earlier version computed tops from lineBlockAt and added the content's
+// padding, and was wrong by that padding in practice — measuring the elements
+// that are actually on screen cannot drift out of step with the theme, and it
+// handles a widget-rendered block (a table, a diagram) with no extra case.
 //
 // Blocks span several lines, so one outline per line would draw a box per line.
 // A single moving rectangle is the only shape that frames a block.
 
-const OUTLINE_PAD = 4;
+const OUTLINE_PAD = 3;
 
-const activeBlockOutline = layer({
+/** The element the outline should frame, or null. Set by the hover listener. */
+let outlineTarget = null;
+
+/** Bumped when the hovered block changes, so the layer knows to recompute. */
+const bumpOutline = StateEffect.define();
+
+const outlineTick = StateField.define({
+  create: () => 0,
+  update(v, tr) {
+    for (const e of tr.effects) if (e.is(bumpOutline)) return v + 1;
+    return v;
+  },
+});
+
+/** Every element making up the hovered block: its lines, or a widget's shell. */
+function outlineParts(view, el) {
+  const key = el.dataset ? el.dataset.block : undefined;
+  if (key === undefined) return [el];
+  return [...view.dom.querySelectorAll('[data-block="' + key + '"]')].filter(
+    (n) => !n.classList.contains("blockbtn"),
+  );
+}
+
+/** Kept only to know the layer is mounted before measuring. */
+let outlineLayerEl = null;
+
+const hoveredBlockOutline = layer({
   above: false,
   class: "cm-blockOutlineLayer",
-  update: (u) => u.docChanged || u.selectionSet || u.geometryChanged,
+  mount(el) { outlineLayerEl = el; },
+  update(u, el) {
+    outlineLayerEl = el;
+    return (
+      u.docChanged ||
+      u.geometryChanged ||
+      u.startState.field(outlineTick) !== u.state.field(outlineTick)
+    );
+  },
   markers(view) {
-    const sel = view.state.selection.main;
-    // While selecting across text the selection itself is the feedback; a block
-    // frame on top of it is noise.
-    if (!sel.empty) return [];
-    const block = blockAt(blockRanges(view.state.doc.toString()), sel.head);
-    if (!block) return [];
-    const first = view.lineBlockAt(block.from);
-    const last = view.lineBlockAt(Math.min(block.to, view.state.doc.length));
-    // The height map measures from the top of the content area; a layer marker
-    // is positioned against the content element's padding box. Those differ by
-    // exactly the content's top padding, which is 2.6rem here — measured rather
-    // than hardcoded, because the padding is set in the theme above and would
-    // silently drift out of step with a literal.
-    const cs = getComputedStyle(view.contentDOM);
-    const offsetTop = parseFloat(cs.paddingTop) || 0;
-    const offsetLeft = parseFloat(cs.paddingLeft) || 0;
-    const width = view.contentDOM.clientWidth - offsetLeft * 2;
+    if (!outlineTarget || !outlineTarget.isConnected || !outlineLayerEl) return [];
+    const parts = outlineParts(view, outlineTarget);
+    if (!parts.length) return [];
+    let top = Infinity, bottom = -Infinity;
+    for (const n of parts) {
+      const r = n.getBoundingClientRect();
+      if (r.height === 0) continue;
+      top = Math.min(top, r.top);
+      bottom = Math.max(bottom, r.bottom);
+    }
+    if (top === Infinity) return [];
+    // A marker's coordinates are not relative to the layer element or to the
+    // content element. CodeMirror positions them against the scroller's
+    // scrollable origin — see getBase() in @codemirror/view, which is
+    // scrollDOM's client rect minus its scroll offset. Guessing at this twice
+    // put the outline 46px and then 48px out; this mirrors the real thing.
+    const scroller = view.scrollDOM;
+    const sRect = scroller.getBoundingClientRect();
+    const baseTop = sRect.top - scroller.scrollTop;
+    const baseLeft = sRect.left - scroller.scrollLeft;
+    const content = view.contentDOM.getBoundingClientRect();
     return [
       new RectangleMarker(
         "cm-blockOutline",
-        offsetLeft,
-        offsetTop + first.top - OUTLINE_PAD,
-        width,
-        last.bottom - first.top + OUTLINE_PAD * 2,
+        content.left - baseLeft,
+        top - baseTop - OUTLINE_PAD,
+        content.width,
+        bottom - top + OUTLINE_PAD * 2,
       ),
     ];
   },
@@ -981,7 +1039,8 @@ const view = new EditorView({
     extensions: [
       history(),
       drawSelection(),
-      activeBlockOutline,
+      outlineTick,
+      hoveredBlockOutline,
       highlightActiveLine(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.lineWrapping,
