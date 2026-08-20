@@ -244,12 +244,34 @@ const CLEAN = {
 // theming. Containment is.
 //
 // Custom properties inherit through a shadow boundary, so the palette still
-// reaches the block. Everything else has to be handed over deliberately — which
-// includes the image sizing that .embed's own rules gave these blocks before
-// they were behind a boundary.
+// reaches the block. Everything else has to be handed over deliberately.
 const SHADOW_BASE = `:host{all:initial;display:block;font-family:var(--sans);` +
   `font-size:0.9rem;line-height:1.5;color:var(--ink)}` +
-  `*,*::before,*::after{box-sizing:border-box}` +
+  `*,*::before,*::after{box-sizing:border-box}`;
+
+// For an svg or xml block only, never an html one.
+//
+// Two things were lost when these blocks moved behind the boundary. The sanitised
+// markup used to be the direct child of `.embed`, which is a flex container, and
+// it was sized by `.embed svg, .embed img` in the page's own stylesheet. Neither
+// survived: a page rule does not cross a shadow boundary, and the holder div
+// became the flex item in the SVG's place.
+//
+// That combination is what made every diagram in this project render as an empty
+// box. An `<svg>` carrying only a `viewBox` has an aspect ratio but no intrinsic
+// width, and as a grandchild of the flex container it had nothing definite to
+// resolve `width: auto` against — the holder's own width came from its content,
+// which was the SVG. Measured in Chromium: 0×0. `display: contents` removes the
+// holder's box so the markup is the flex item again, which gives the SVG the
+// container's width to work from, and the sizing rule below is the page rule
+// moved in behind the boundary. Measured after: 590×194 for a 640×210 viewBox in
+// a 590px column, and an SVG with explicit width/height is left at its own size.
+//
+// Deliberately not applied to html blocks. Their holder has to stay one block:
+// `display: contents` would make each top-level element of the block a separate
+// flex item, laid out in a row, and the sizing rule would blockify an `<img>`
+// out of the sentence it was written into.
+const MARKUP_SHADOW_CSS = `.markup{display:contents}` +
   `svg,img{max-width:100%;height:auto;display:block}`;
 
 // DOMPurify drops <style> even with ADD_TAGS, so the CSS is lifted out before
@@ -446,9 +468,13 @@ class MarkupWidget extends WidgetType {
     try {
       // One path for every kind. html, svg and xml are all author-written
       // markup from a document anyone with the link can edit, so all three get
-      // the CSS lift, the filter, and the shadow boundary.
+      // the CSS lift, the filter, and the shadow boundary. Only the layout
+      // differs, and only because an svg block's box tree used to be different
+      // (see MARKUP_SHADOW_CSS). RENDERABLE maps both svg and xml to "svg".
+      const isMarkupImage = this.kind === "svg";
       const { html, css } = splitStyles(this.source);
       const holder = document.createElement("div");
+      if (isMarkupImage) holder.className = "markup";
       holder.innerHTML = DOMPurify.sanitize(html, CLEAN);
       // Anything that still arrives as a <style> — a construction the lift did
       // not recognise — is scoped by the shadow root but was never filtered.
@@ -461,7 +487,7 @@ class MarkupWidget extends WidgetType {
       if (!holder.innerHTML.trim()) throw new Error("nothing left after sanitising");
       const root = wrap.attachShadow({ mode: "open" });
       const sheet = document.createElement("style");
-      sheet.textContent = SHADOW_BASE + "\n" + css;
+      sheet.textContent = SHADOW_BASE + (isMarkupImage ? MARKUP_SHADOW_CSS : "") + "\n" + css;
       root.appendChild(sheet);
       root.appendChild(holder);
     } catch (e) {
