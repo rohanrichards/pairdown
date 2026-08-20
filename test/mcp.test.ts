@@ -118,3 +118,54 @@ test("a comment's scope defaults to quote when absent, and prints on read", asyn
   await transport.close();
   web.stop();
 });
+
+test("once the room server goes away, edit refuses and read says the text is stale", async () => {
+  const dir = join(tmpdir(), `mcp-drop-${Math.random().toString(36).slice(2)}`);
+  const rooms = new Rooms(dir);
+  const info = rooms.create("Drop test");
+  rooms.get(info.id)!.append("# Drop test\n\na line to change");
+  rooms.get(info.id)!.save();
+  const web = startWeb(rooms, 8300 + Math.floor(Math.random() * 40))!;
+
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ["run", join(import.meta.dir, "..", "src", "mcp.ts")],
+    env: { ...process.env, SPEC_ROOM_URL: `ws://127.0.0.1:${web.port}` },
+  });
+  const client = new Client({ name: "drop-test", version: "0.0.1" }, { capabilities: {} });
+  await client.connect(transport);
+  await client.callTool({ name: "room_join", arguments: { room_id: info.id } });
+  expect(text(await client.callTool({ name: "read", arguments: {} }))).toContain("a line to change");
+
+  // A room-server restart. The companion keeps its populated Y.Doc, and a send
+  // on the closed socket is discarded without error — so every write below
+  // would once have reported success while reaching nobody.
+  web.stop();
+
+  // The close has to reach the companion process before it can report it.
+  // resolve on an id that does not exist is the safe probe: a no-op either way.
+  const refuse = /not connected to the room server/i;
+  let refusing = false;
+  for (let i = 0; i < 200 && !refusing; i++) {
+    refusing = refuse.test(
+      text(await client.callTool({ name: "resolve", arguments: { comment_id: "no-such" } })),
+    );
+    if (!refusing) await new Promise((r) => setTimeout(r, 20));
+  }
+  expect(refusing).toBe(true);
+
+  for (const call of [
+    { name: "edit", arguments: { find: "a line to change", replace: "never lands" } },
+    { name: "append", arguments: { markdown: "never lands" } },
+    { name: "insert", arguments: { after: "# Drop test", markdown: "never lands" } },
+    { name: "reply", arguments: { comment_id: "whatever", text: "never lands" } },
+    { name: "resolve", arguments: { comment_id: "whatever" } },
+  ]) {
+    expect(text(await client.callTool(call))).toMatch(refuse);
+  }
+  expect(text(await client.callTool({ name: "read", arguments: {} }))).toContain("not connected");
+  expect(rooms.get(info.id)!.text()).not.toContain("never lands");
+
+  await client.close();
+  await transport.close();
+});

@@ -59,6 +59,20 @@ const ok = (text: string) => ({ content: [{ type: "text" as const, text }] });
 const needRoom = () =>
   ok("Not in a room yet. Call room_list to see what exists, then room_join with a room_id.");
 
+// Every tool that mutates the room's CRDT. RoomClient refuses these on its own
+// once its socket has closed (see src/roomclient.ts); this set is what turns
+// that refusal into something the model can act on.
+const WRITE_TOOLS = new Set(["edit", "append", "insert", "reply", "resolve"]);
+const STALE =
+  "--- WARNING: not connected to the room server. What follows is the last state " +
+  "this session saw, not the document as it is now. Call room_join to reattach. ---";
+const notConnected = () =>
+  ok(
+    "Not connected to the room server, so nothing written now would reach the room or " +
+      "the people in it. Call room_join to reattach, then read before writing — the " +
+      "document may have moved on while the connection was down.",
+  );
+
 // ---- comment helpers ------------------------------------------------------
 // RoomClient exposes the raw CRDT (comments, meta, doc); the view and mutation
 // helpers that used to live in src/doc.ts are rebuilt here against whichever
@@ -341,12 +355,19 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
   if (!room) return needRoom();
 
+  // A write while the socket is down changes nothing anybody else can see —
+  // this process holds the only copy that moved — so it must refuse rather than
+  // answer "Everyone with the document open now sees the change". Reads are
+  // still served, from what is now openly labelled a stale snapshot.
+  if (WRITE_TOOLS.has(req.params.name) && !room.connected) return notConnected();
+
   switch (req.params.name) {
     case "read": {
       const open = viewComments(room).filter((c) => !c.resolved);
       const lines = open.map((c) => renderThread(room!, c));
       return ok(
-        `--- DOCUMENT (${room.content.length} chars) ---\n${room.text()}\n\n` +
+        (room.connected ? "" : `${STALE}\n\n`) +
+          `--- DOCUMENT (${room.content.length} chars) ---\n${room.text()}\n\n` +
           `--- OPEN COMMENTS (${open.length}) ---\n` +
           (lines.length ? lines.join("\n") : "  (none)"),
       );
@@ -384,9 +405,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         : ok(`Not edited: ${r.reason}. Call read and match the current text exactly.`);
     }
 
-    case "append":
-      room.append(String(a.markdown ?? ""));
-      return ok("Appended.");
+    case "append": {
+      const r = room.append(String(a.markdown ?? ""));
+      return r.ok ? ok("Appended.") : ok(`Not appended: ${r.reason}`);
+    }
 
     case "insert": {
       const r = room.insertAfter(String(a.after ?? ""), String(a.markdown ?? ""));
