@@ -58,3 +58,14 @@ export function blockRanges(text) {
   }
   return out;
 }
+/**
+ * The block containing `pos`, or null if none does.
+ *
+ * Ranges are inclusive of `to`, because a caret sitting at the very end of a
+ * block is still in that block — and a caret in the blank line between two
+ * blocks belongs to neither, which is why this can return null.
+ */
+export function blockAt(blocks, pos) {
+  for (const b of blocks) if (pos >= b.from && pos <= b.to) return b;
+  return null;
+}

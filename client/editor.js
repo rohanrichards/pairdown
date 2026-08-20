@@ -6,7 +6,7 @@
 // while the shared document is text rather than a node tree.
 import * as Y from "yjs";
 import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from "y-protocols/awareness";
-import { EditorView, keymap, drawSelection, highlightActiveLine, Decoration, ViewPlugin, WidgetType } from "@codemirror/view";
+import { EditorView, layer, RectangleMarker, keymap, drawSelection, highlightActiveLine, Decoration, ViewPlugin, WidgetType } from "@codemirror/view";
 import DOMPurify from "dompurify";
 import { EditorState, RangeSetBuilder, StateField, StateEffect } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
@@ -15,7 +15,7 @@ import { Table, Strikethrough, TaskList } from "@lezer/markdown";
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 import { yCollab } from "y-codemirror.next";
-import { blockRanges } from "./blocks.js";
+import { blockRanges, blockAt } from "./blocks.js";
 import { mountRail } from "./outline-rail.js";
 import { anchorState } from "../src/anchor";
 
@@ -787,6 +787,57 @@ function attachBlockButtonHover(view) {
   });
 }
 
+// ---- the active block outline -----------------------------------------------
+// A single element that tracks whichever block holds the caret, drawn as an
+// outline so it costs no layout: a border would shift the text every time it
+// appeared, and margins on block-level things in this file have twice
+// desynchronised CodeMirror's height map and made clicks land low.
+//
+// This is a `layer`, the same primitive drawSelection uses. Two properties come
+// free from that and both matter here: the marker is absolutely positioned, so
+// it is outside layout entirely, and RectangleMarker reuses its DOM element
+// when only the geometry changes — which is what lets a CSS transition slide
+// the outline from one block to the next instead of blinking between them.
+//
+// Blocks span several lines, so one outline per line would draw a box per line.
+// A single moving rectangle is the only shape that frames a block.
+
+const OUTLINE_PAD = 4;
+
+const activeBlockOutline = layer({
+  above: false,
+  class: "cm-blockOutlineLayer",
+  update: (u) => u.docChanged || u.selectionSet || u.geometryChanged,
+  markers(view) {
+    const sel = view.state.selection.main;
+    // While selecting across text the selection itself is the feedback; a block
+    // frame on top of it is noise.
+    if (!sel.empty) return [];
+    const block = blockAt(blockRanges(view.state.doc.toString()), sel.head);
+    if (!block) return [];
+    const first = view.lineBlockAt(block.from);
+    const last = view.lineBlockAt(Math.min(block.to, view.state.doc.length));
+    // The height map measures from the top of the content area; a layer marker
+    // is positioned against the content element's padding box. Those differ by
+    // exactly the content's top padding, which is 2.6rem here — measured rather
+    // than hardcoded, because the padding is set in the theme above and would
+    // silently drift out of step with a literal.
+    const cs = getComputedStyle(view.contentDOM);
+    const offsetTop = parseFloat(cs.paddingTop) || 0;
+    const offsetLeft = parseFloat(cs.paddingLeft) || 0;
+    const width = view.contentDOM.clientWidth - offsetLeft * 2;
+    return [
+      new RectangleMarker(
+        "cm-blockOutline",
+        offsetLeft,
+        offsetTop + first.top - OUTLINE_PAD,
+        width,
+        last.bottom - first.top + OUTLINE_PAD * 2,
+      ),
+    ];
+  },
+});
+
 const theme = EditorView.theme({
   "&": { height: "100%", fontSize: "18px", backgroundColor: "transparent", color: "var(--ink)" },
   "&.cm-focused": { outline: "none" },
@@ -802,6 +853,20 @@ const theme = EditorView.theme({
     padding: "2.6rem 1.5rem", caretColor: "var(--ink)",
   },
   ".cm-line": { padding: "0" },
+  // The layer holds one absolutely-positioned marker: no layout cost, and no
+  // pointer target, so clicking through it lands in the text as before.
+  ".cm-blockOutlineLayer": { pointerEvents: "none" },
+  ".cm-blockOutline": {
+    outline: "1.5px solid var(--accent)",
+    outlineOffset: "0px",
+    borderRadius: "4px",
+    opacity: "0.5",
+    pointerEvents: "none",
+    transition: "top 130ms cubic-bezier(.2,.8,.2,1), height 130ms cubic-bezier(.2,.8,.2,1)",
+  },
+  "@media (prefers-reduced-motion: reduce)": {
+    ".cm-blockOutline": { transition: "none" },
+  },
   ".cm-activeLine": { backgroundColor: "transparent" },
   // drawSelection() suppresses the native caret and paints its own
   // .cm-cursor, so the caretColor above is inert. CodeMirror's base theme
@@ -916,6 +981,7 @@ const view = new EditorView({
     extensions: [
       history(),
       drawSelection(),
+      activeBlockOutline,
       highlightActiveLine(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.lineWrapping,

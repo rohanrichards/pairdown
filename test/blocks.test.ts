@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { blockRanges } from "../client/blocks.js";
+import { blockRanges, blockAt } from "../client/blocks.js";
 
 test("a heading and the paragraph under it are separate blocks", () => {
   const t = "# Title\n\nsome prose here\n";
@@ -89,4 +89,31 @@ test("a colon-aligned delimiter row still makes a table", () => {
   const blocks = blockRanges(t);
   expect(blocks).toHaveLength(1);
   expect(blocks[0].kind).toBe("table");
+});
+
+test("blockAt finds the block holding a position", () => {
+  const t = "# Title\n\nfirst paragraph\n\nsecond paragraph\n";
+  const blocks = blockRanges(t);
+  expect(blockAt(blocks, 0).kind).toBe("heading");
+  expect(blockAt(blocks, t.indexOf("first")).kind).toBe("paragraph");
+  expect(t.slice(blockAt(blocks, t.indexOf("second")).from)).toStartWith("second");
+});
+
+test("blockAt includes both ends of a block", () => {
+  const t = "# Title\n\nbody\n";
+  const [head] = blockRanges(t);
+  expect(blockAt(blockRanges(t), head.from)).not.toBeNull();
+  expect(blockAt(blockRanges(t), head.to)).not.toBeNull();
+});
+
+test("blockAt returns null in the gap between blocks", () => {
+  const t = "# Title\n\nbody\n";
+  // the blank line separating the heading from the paragraph belongs to neither
+  const gap = t.indexOf("\n\n") + 1;
+  expect(blockAt(blockRanges(t), gap)).toBeNull();
+});
+
+test("blockAt returns null past the end of the document", () => {
+  const t = "# Title\n";
+  expect(blockAt(blockRanges(t), 999)).toBeNull();
 });
