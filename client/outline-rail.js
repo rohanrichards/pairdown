@@ -13,6 +13,27 @@
 import { outlineOf } from "../src/outline";
 
 /**
+ * How many `positions` fall inside each entry's section.
+ *
+ * A comment counts against the section that visually holds it: from that
+ * heading's offset up to (not including) the next heading's offset, or the
+ * end of the document for the last heading. A position before the first
+ * heading counts nowhere, matching outlineOf's own choice to drop preamble
+ * content — there is no entry to hang that count on.
+ *
+ * Pure and DOM-free on purpose: this is the one piece of genuinely new,
+ * non-trivial logic in the rail, so it is kept testable under plain
+ * `bun test` rather than buried inside the DOM-building code in `paint()`
+ * below (see test/outline-rail.test.ts).
+ */
+export function sectionCounts(entries, positions) {
+  return entries.map((e, i) => {
+    const nextOffset = i + 1 < entries.length ? entries[i + 1].offset : Infinity;
+    return positions.reduce((n, p) => n + (p >= e.offset && p < nextOffset ? 1 : 0), 0);
+  });
+}
+
+/**
  * Mount the rail into `el`.
  *
  * - `getText()` returns the current document text.
@@ -23,12 +44,6 @@ import { outlineOf } from "../src/outline";
  *   anchored to real text); editor.js already owns the anchor -> position
  *   resolver, so that logic is reused rather than duplicated here.
  *
- * A comment counts against the section that visually holds it: from that
- * heading's offset up to (not including) the next heading's offset, or the
- * end of the document for the last heading. A position before the first
- * heading counts nowhere, matching outlineOf's own choice to drop preamble
- * content — there is no entry to hang that count on.
- *
  * Returns a `paint` function. The caller decides when to call it; see
  * editor.js, which schedules it from the same rAF-debounced spot comment-card
  * layout already runs from, so a burst of keystrokes or comment edits repaints
@@ -38,13 +53,10 @@ import { outlineOf } from "../src/outline";
 export function mountRail(el, view, getText, getComments) {
   function paint() {
     const entries = outlineOf(getText());
-    const positions = getComments();
+    const counts = sectionCounts(entries, getComments());
 
     el.replaceChildren(...entries.map((e, i) => {
-      const nextOffset = i + 1 < entries.length ? entries[i + 1].offset : Infinity;
-      const count = positions.reduce(
-        (n, p) => n + (p >= e.offset && p < nextOffset ? 1 : 0), 0,
-      );
+      const count = counts[i];
 
       const a = document.createElement("a");
       a.href = "#";
