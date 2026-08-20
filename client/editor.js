@@ -63,8 +63,6 @@ const DOC_MSG = 0, AWARE_MSG = 1;
 const ROOM_ID = (location.pathname.match(/^\/r\/([a-z0-9]{8})/) || [])[1] || "";
 const proto = location.protocol === "https:" ? "wss:" : "ws:";
 const WS_URL = `${proto}//${location.host}/ws?room=${ROOM_ID}`;
-const ws = new WebSocket(WS_URL);
-ws.binaryType = "arraybuffer";
 
 function tagged(tag, payload) {
   const out = new Uint8Array(payload.length + 1);
@@ -74,34 +72,70 @@ function tagged(tag, payload) {
 }
 
 const el = (id) => document.getElementById(id);
-function setStatus(connected) {
-  el("wsdot").className = "dot " + (connected ? "on" : "off");
-  el("wsstate").textContent = connected ? "connected" : "disconnected";
+const DOT = { connected: "on", connecting: "wait", reconnecting: "wait", disconnected: "off" };
+function setStatus(state) {
+  el("wsdot").className = "dot " + DOT[state];
+  el("wsstate").textContent = state;
 }
 
-ws.onopen = () => {
-  setStatus(true);
-  ws.send(tagged(AWARE_MSG, encodeAwarenessUpdate(awareness, [doc.clientID])));
-};
-ws.onclose = () => setStatus(false);
-ws.onerror = () => setStatus(false);
+// The socket is replaced on every reconnect, so nothing may capture it: send
+// through the current one or not at all.
+let ws = null;
+let attempt = 0;
+const BACKOFF_MS = [400, 800, 1600, 3200, 8000];
+const live = () => ws !== null && ws.readyState === 1;
 
-ws.onmessage = (ev) => {
-  const buf = new Uint8Array(ev.data);
-  const tag = buf[0], payload = buf.subarray(1);
-  if (tag === DOC_MSG) Y.applyUpdate(doc, payload, "remote");
-  else if (tag === AWARE_MSG) applyAwarenessUpdate(awareness, payload, "remote");
-};
+// Without this, a dropped socket left the editor fully usable — live preview,
+// comment cards, the outline rail all still updating — while every keystroke
+// went nowhere and nothing was saved. A person could write for minutes into a
+// document that was no longer shared, with only a small dot to say so.
+function connect() {
+  setStatus(attempt === 0 ? "connecting" : "reconnecting");
+  ws = new WebSocket(WS_URL);
+  ws.binaryType = "arraybuffer";
+
+  ws.onopen = () => {
+    attempt = 0;
+    setStatus("connected");
+    // The whole local state, not just the updates since the last one. Anything
+    // typed while the socket was down never reached the server, and a Yjs
+    // update is commutative and idempotent — so merging a full state carries
+    // those edits across without overwriting whatever else changed server-side
+    // meanwhile. On a first connect it is a no-op the server already knows.
+    ws.send(tagged(DOC_MSG, Y.encodeStateAsUpdate(doc)));
+    ws.send(tagged(AWARE_MSG, encodeAwarenessUpdate(awareness, [doc.clientID])));
+  };
+
+  ws.onmessage = (ev) => {
+    const buf = new Uint8Array(ev.data);
+    const tag = buf[0], payload = buf.subarray(1);
+    if (tag === DOC_MSG) Y.applyUpdate(doc, payload, "remote");
+    else if (tag === AWARE_MSG) applyAwarenessUpdate(awareness, payload, "remote");
+  };
+
+  // onerror is always followed by onclose, so the retry lives in one place.
+  ws.onerror = () => setStatus("reconnecting");
+  ws.onclose = () => {
+    setStatus("reconnecting");
+    // Backoff, but no giving up: a room-server restart is the ordinary case
+    // here, and the point of retrying is that the page comes back by itself
+    // when it returns. The interval tops out so an unreachable server is a
+    // heartbeat rather than a hammer.
+    const wait = BACKOFF_MS[Math.min(attempt++, BACKOFF_MS.length - 1)];
+    setTimeout(connect, wait);
+  };
+}
+connect();
 
 doc.on("update", (update, origin) => {
   if (origin === "remote") return;
-  if (ws.readyState === 1) ws.send(tagged(DOC_MSG, update));
+  if (live()) ws.send(tagged(DOC_MSG, update));
 });
 
 awareness.on("update", ({ added, updated, removed }, origin) => {
   if (origin === "remote") return;
   const changed = added.concat(updated, removed);
-  if (ws.readyState === 1) ws.send(tagged(AWARE_MSG, encodeAwarenessUpdate(awareness, changed)));
+  if (live()) ws.send(tagged(AWARE_MSG, encodeAwarenessUpdate(awareness, changed)));
 });
 
 window.addEventListener("beforeunload", () => awareness.destroy());
