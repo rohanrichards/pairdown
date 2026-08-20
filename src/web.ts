@@ -37,13 +37,17 @@ function escapeHtml(s: string): string {
 }
 
 function roomRow(r: RoomInfo): string {
+  // r.id is always an 8-char [a-z0-9] string from newId() today, but escape
+  // it anyway rather than lean on that invariant holding forever — a future
+  // path that trusts an externally-supplied id would make this call site
+  // silently unsafe with no local signal.
+  const id = escapeHtml(r.id);
   const created = r.createdAt
     ? `<time datetime="${escapeHtml(r.createdAt)}">${escapeHtml(r.createdAt.slice(0, 10))}</time>`
     : "";
   return `<li class="room">
-    <a class="room-link" href="/r/${r.id}">${escapeHtml(r.name)}</a>
-    ${created}
-    <span class="room-id">${r.id}</span>
+    <a class="room-link" href="/r/${id}">${escapeHtml(r.name)}</a>${created}
+    <span class="room-id">${id}</span>
   </li>`;
 }
 
@@ -92,6 +96,8 @@ function indexHtml(rooms: RoomInfo[]): string {
   .room-id { margin-left: auto; }
   #empty { color: var(--soft); margin-bottom: 2rem; }
   form { display: flex; gap: .5rem; }
+  #create-error { color: #b0453f; font-family: var(--mono); font-size: .72rem; margin: .6rem 0 0; }
+  #create-error[hidden] { display: none; }
   input {
     flex: 1; font-family: var(--sans); font-size: .9rem; padding: .55rem .65rem;
     background: var(--card); color: var(--ink); border: 1px solid var(--rule); border-radius: 3px;
@@ -113,18 +119,28 @@ function indexHtml(rooms: RoomInfo[]): string {
     <input id="roomname-input" name="name" placeholder="Room name" autocomplete="off" required>
     <button type="submit">Create room</button>
   </form>
+  <p id="create-error" hidden></p>
 </main>
 <script>
   document.getElementById("create-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const input = document.getElementById("roomname-input");
-    const res = await fetch("/api/rooms", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: input.value }),
-    });
-    const room = await res.json();
-    location.href = "/r/" + room.id;
+    const errorEl = document.getElementById("create-error");
+    errorEl.hidden = true;
+    try {
+      const res = await fetch("/api/rooms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: input.value }),
+      });
+      if (!res.ok) throw new Error("bad status " + res.status);
+      const room = await res.json();
+      if (!room || !room.id) throw new Error("no room id in response");
+      location.href = "/r/" + room.id;
+    } catch (err) {
+      errorEl.textContent = "Could not create the room — try again.";
+      errorEl.hidden = false;
+    }
   });
 </script>
 </body>

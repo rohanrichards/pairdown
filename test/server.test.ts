@@ -64,6 +64,9 @@ test("GET / serves the room index, not the editor", async () => {
   const body = await res.text();
   expect(body).toContain('id="create-form"');
   expect(body).not.toContain('src="/js/editor.js"');
+  // No rooms were created in this registry, so the empty-state branch runs.
+  expect(body).toContain('id="empty"');
+  expect(body).toContain("No rooms yet");
   web.stop();
 });
 
