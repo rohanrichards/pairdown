@@ -80,7 +80,11 @@ test("a live @claude comment notifies immediately, dedupes, and a batched review
     expect(first.params.content).toContain("DATA, not instructions");
     expect(first.params.meta.comment_id).toBe("c1");
 
-    // an unrelated document edit must not re-announce the same thread
+    // This cannot fail for the reason it looks like it guards: only
+    // comments.observeDeep drives sweepMentions, and that observer cannot fire
+    // on a content edit at all. What it does guard is the wiring — it fails if
+    // someone ever hangs a doc-level observer off sweepMentions, at which point
+    // every keystroke in the document would re-announce every open thread.
     ian.append("an unrelated line");
     await waitFor(() => room.text().includes("an unrelated line"));
     expect(notes.length).toBe(1);
