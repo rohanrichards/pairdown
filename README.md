@@ -1,54 +1,61 @@
 # spec-room
 
-Spike: a collaborative spec document with a Claude Code session attached to it.
+A collaborative markdown editor with an agent in the room. One server holds
+every spec; people open a link and edit the same document together, live, and
+leave comments in the margin. A Claude Code session can be invited into a room
+to answer them.
 
-Anyone with the link edits the same markdown live and comments on any selection.
-Mentioning `@claude` addresses the session that has the repository open. The
-service never calls a model — the agent is the author's own Claude Code session,
-so it stays on subscription billing and keeps its project context.
+It works in a browser with nothing installed — rooms, editing, comments and
+sharing all work with no agent attached. The Claude Code plugin is the
+optional way to attach a session to a room; it never runs the document
+itself.
 
-## What this proves
-
-- **CRDT editing** — two people typing at once merge, no last-write-wins
-- **Comment anchoring that survives edits** — anchors are Yjs relative
-  positions, so inserting text above a comment doesn't shift it onto the wrong
-  words the way a character offset or a CSS path would
-- **Agent edits as operations** — `edit_spec` replaces one unique passage inside
-  the CRDT rather than rewriting the document, so it can't clobber a human
-  mid-sentence
-- **Comment text treated as data** — comments reach the model inside an explicit
-  untrusted-data envelope, never as instructions
-
-## Run it
-
-Standalone (no agent, just the collaborative document):
+## Run the room server
 
 ```bash
 bun run src/server.ts        # http://127.0.0.1:8790
 ```
 
-With a Claude Code session attached:
+This serves every room from one process. Open `http://127.0.0.1:8790/` for a
+room index — every room on the server, linked to its own `/r/<id>`, with a
+form to create a new one. Open a specific room directly at `/r/<id>`.
+
+Rooms persist under `data/rooms/`, one file per room, and outlive the server
+process: closing it and starting it again finds every room intact.
+
+## Attach a Claude Code session
+
+The plugin is the only thing that connects an agent to a room:
 
 ```bash
-claude --dangerously-load-development-channels server:spec-room
+claude --plugin-dir .
 ```
 
-`.mcp.json` points at `src/mcp.ts`, which serves the web UI *and* speaks MCP over
-stdio. Tools (`read_spec`, `edit_spec`, `append_spec`, `reply_comment`,
-`resolve_comment`) work in any session. The channel push — being woken when a
-comment mentions `@claude` — additionally needs the channels research preview,
-and on Team/Enterprise an org admin must set `channelsEnabled`.
+`.mcp.json` points at `src/mcp.ts`, which speaks MCP over stdio and connects
+to the room server as a client — it holds no document itself. The plugin's
+`spec-room` binary, on `PATH` while the plugin is enabled, starts the room
+server on demand if it isn't already running; run it before attaching a
+session, or run `bun run src/server.ts` yourself.
+
+Once attached, a session calls `room_list` to see what rooms exist,
+`room_create` or `room_join` to attach to one, then `read`, `outline`,
+`search`, `edit`, `append`, `insert`, `comments`, `reply`, and `resolve` to
+work in it — the same tools regardless of which room is joined. `@claude` in
+a comment notifies the session immediately; an untagged comment waits until
+someone presses "send to claude".
 
 ## Test
 
 ```bash
+bun test
 bun run src/smoke.ts
 ```
 
-Seeds a throwaway document with one `@claude` comment, spawns the MCP server
-against it, and drives the whole tool surface.
+`smoke.ts` seeds a throwaway room, spawns the MCP server against it, and
+drives the whole tool surface end to end.
 
 ## Deliberately not here
 
-Auth, multiple documents, hosting, images, rich text. One document, localhost,
-no accounts. This is a spike for the loop, not the product.
+Auth, SSO, sharing and permissions, hosting and deployment. Local first, a
+tunnel to demo. See `docs/superpowers/specs/2026-08-19-spec-room-design.md`
+for the full design.

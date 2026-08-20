@@ -53,16 +53,20 @@ next day finds the document intact.
 
 Every room lives behind the same address, so a shared link never moves.
 
+The server also answers `/` with a room index: every room on the server,
+each linked to its `/r/<id>`, and a form to create a new one. The editor
+itself lives only at `/r/<id>` — it has nothing to connect to at `/`. The
+index is how a person reaches or creates a room without the CLI at all.
+
 ## An agent is a participant you invite
 
 A room with no agent is an ordinary room, not a broken one. Claude is attached by
 default when a spec is published to share, and absent otherwise.
 
-"No agent here" is simply a client that is not connected. The presence indicator
-already shows exactly that.
-
-A room records the session that created it, so the tool can print the command to
-resume that conversation. The room becomes an index into your own history.
+"No agent here" is simply a client that is not connected. The companion publishes
+its own state on the awareness channel, under an `agent` field carrying a `busy`
+flag; the browser derives the presence indicator from that, and the server never
+broadcasts presence of its own.
 
 ## Markdown is the source of truth
 
@@ -153,11 +157,14 @@ document as to change one, and no whole-file edit at all.
 
 | | Tools |
 |---|---|
-| Rooms | `room:list` · `room:create` · `room:join` |
+| Rooms | `room_list` · `room_create` · `room_join` |
 | Read | `read` · `outline` · `search` |
 | Write | `edit` · `append` · `insert` |
 | Comments | `comments` · `reply` · `resolve` |
-| History | `history` · `diff` · `restore` |
+
+Colons are not safe across every MCP client, so the tools are named with
+underscores, not the `room:list` shorthand used earlier in this document's own
+history.
 
 `edit` replaces one exact, unique passage and refuses anything else. No
 whole-document write exists, so an agent revising one part never clobbers a person
@@ -189,9 +196,10 @@ team that never installs it still has a working spec tool, with no agent in it.
 | `.mcp.json` | The room client a session talks to |
 | `skills/` | How to write a spec, and when one is ready to publish |
 | `bin/` | The `spec-room` executable, on `PATH` while enabled |
-| `agents/` | A spec reviewer that reads a room and reports back |
 
-Joining a room is `spec-room join <id>`, never a pair of launch flags.
+There is no `spec-room join <id>` command. Joining is something the session
+does, by calling the `room_join` tool once attached — never a pair of launch
+flags the plugin has to be started with.
 
 ## The skill teaches the agent to write for humans
 
@@ -244,7 +252,7 @@ one, and no client changes.
 
 ### How a session joins a room
 
-The session calls `room:create` or `room:join`. The MCP server connects to the
+The session calls `room_create` or `room_join`. The MCP server connects to the
 room server as a client. Nothing is passed at launch, so a resumed session
 rejoins by asking rather than by remembering flags.
 
