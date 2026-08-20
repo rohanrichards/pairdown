@@ -16,6 +16,7 @@ import { syntaxHighlighting, HighlightStyle, syntaxTree } from "@codemirror/lang
 import { tags as t } from "@lezer/highlight";
 import { yCollab } from "y-codemirror.next";
 import { blockRanges } from "./blocks.js";
+import { mountRail } from "./outline-rail.js";
 
 // ---- identity ---------------------------------------------------------------
 
@@ -821,6 +822,12 @@ const view = new EditorView({
       highlightField,
       theme,
       yCollab(content, awareness, { undoManager }),
+      // The outline rail (below) and the comment margin both need to know
+      // when the document itself changes, not just when comments do — a new
+      // heading or a moved one has to reach the rail. scheduleLayout is
+      // already rAF-debounced, so routing this through it coalesces a burst
+      // of keystrokes into one repaint per frame instead of one per change.
+      EditorView.updateListener.of((u) => { if (u.docChanged) scheduleLayout(); }),
     ],
   }),
 });
@@ -1151,6 +1158,19 @@ function buildCard(c, opts = {}) {
 
 // ---- layout -----------------------------------------------------------------
 
+// The rail counts a comment against a section only while it is unresolved and
+// still anchored to real text — a resolved or detached comment (its text
+// deleted or changed out from under it, see commentViews above) tells a
+// reader nothing about where to look next. resolveAnchor already lives inside
+// commentViews' pass over the comment array, so this reuses that rather than
+// resolving anchors a second way.
+function unresolvedCommentPositions() {
+  return commentViews()
+    .filter((c) => !c.resolved && !c.detached && c.from !== null)
+    .map((c) => c.from);
+}
+const paintRail = mountRail(el("rail"), view, () => content.toString(), unresolvedCommentPositions);
+
 function highlightsFor(views) {
   const ranges = [];
   for (const c of views) {
@@ -1230,7 +1250,7 @@ let layoutQueued = false;
 function scheduleLayout() {
   if (layoutQueued) return;
   layoutQueued = true;
-  requestAnimationFrame(() => { layoutQueued = false; layoutCards(); });
+  requestAnimationFrame(() => { layoutQueued = false; layoutCards(); paintRail(); });
 }
 function render() { scheduleLayout(); }
 

@@ -76,7 +76,7 @@
   button.small { padding: .22rem .5rem; font-size: .62rem; margin-top: .5rem; }
 
   /* ---- layout ---- */
-  main { flex: 1; display: grid; grid-template-columns: minmax(0,1fr) 330px; min-height: 0; }
+  main { flex: 1; display: grid; grid-template-columns: 190px minmax(0,1fr) 330px; min-height: 0; }
   #editor { min-height: 0; overflow: hidden; position: relative; }
   aside {
     border-left: 1px solid var(--rule); background: var(--card);
@@ -100,6 +100,18 @@
   }
   #detached:hover { color: var(--ink); background: var(--paper); }
   #detached::before { content: "⚑ "; color: var(--faint); }
+
+  /* ---- outline rail ---- */
+  #rail {
+    border-right: 1px solid var(--rule); background: var(--card);
+    min-height: 0; overflow-y: auto; padding: .7rem .6rem;
+  }
+  #rail a { display: block; font-size: .74rem; color: var(--soft); text-decoration: none;
+            padding: .22rem .3rem; border-radius: 2px; line-height: 1.35; }
+  #rail a.d2 { padding-left: .9rem; } #rail a.d3 { padding-left: 1.7rem; }
+  #rail a:hover { background: var(--hl-dim); }
+  #rail a.here { background: var(--accent-bg); color: var(--accent-ink); font-weight: 600; }
+  #rail .mark { float: right; font-family: var(--mono); font-size: .6rem; color: var(--accent-ink); }
 
   /* ---- the document itself ---- */
   .cm-editor { height: 100%; }
@@ -235,6 +247,10 @@
   @media (max-width: 860px) {
     main { grid-template-columns: minmax(0,1fr); grid-template-rows: 1fr 240px; }
     aside { border-left: 0; border-top: 1px solid var(--rule); }
+    /* the rail needs its own column to make sense; below the breakpoint the
+       document and the comment margin already have to fight for room, so it
+       is dropped rather than squeezed in as a third stacked pane */
+    #rail { display: none; }
   }
 </style>
 </head>
@@ -253,6 +269,7 @@
 </header>
 
 <main>
+  <nav id="rail"></nav>
   <div id="editor">
     <div id="thinking" hidden><i></i> Claude is working…</div>
   </div>
