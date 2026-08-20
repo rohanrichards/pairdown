@@ -803,6 +803,16 @@ const theme = EditorView.theme({
   },
   ".cm-line": { padding: "0" },
   ".cm-activeLine": { backgroundColor: "transparent" },
+  // drawSelection() suppresses the native caret and paints its own
+  // .cm-cursor, so the caretColor above is inert. CodeMirror's base theme
+  // then colours that element from its light defaults, because this theme is
+  // not declared dark -- a black caret, invisible on the dark palette and
+  // easy to lose on the light one. Colour it from the token so it is visible
+  // in both, and widen it slightly: at this measure a 1.2px caret is hard to
+  // find in a wall of serif text.
+  ".cm-cursor, .cm-dropCursor": {
+    borderLeftColor: "var(--ink)", borderLeftWidth: "2px",
+  },
   ".cm-selectionBackground, ::selection": { backgroundColor: "var(--accent-bg) !important" },
   // contain is a containment boundary, not decoration. A shadow root scopes
   // selectors but not layout: :host{position:fixed;inset:0;z-index:9999} in a
