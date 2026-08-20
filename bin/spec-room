@@ -3,10 +3,35 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${SPEC_ROOM_PORT:-8790}"
-if curl -fsS "http://127.0.0.1:${PORT}/api/rooms" >/dev/null 2>&1; then
+LOG="${ROOT}/data/server.log"
+
+# /api/rooms answers with a JSON array. Checking for the bracket rather than
+# just a 2xx is what tells "spec-room is up" from "something else holds 8790".
+if [ "$(curl -fsS "http://127.0.0.1:${PORT}/api/rooms" 2>/dev/null | head -c 1)" = "[" ]; then
   echo "spec-room already running on http://127.0.0.1:${PORT}"
+  exit 0
+fi
+
+# data/ is gitignored, so a fresh clone has none, and the redirect below then
+# fails inside a backgrounded job — where set -e cannot see it. That printed
+# "spec-room started" over a server that had never started, on the plugin's
+# advertised entry point, on its first run on any new machine.
+mkdir -p "${ROOT}/data"
+nohup bun run "${ROOT}/src/server.ts" >"${LOG}" 2>&1 &
+
+# The server walks forward when the port is busy, so the port it actually bound
+# is the one it prints, not the one asked for. Wait for that line rather than
+# announcing a URL nobody can reach.
+url=""
+for _ in $(seq 1 50); do
+  url="$(grep -o 'http://127\.0\.0\.1:[0-9]*' "${LOG}" 2>/dev/null | tail -1 || true)"
+  [ -n "${url}" ] && break
+  sleep 0.2
+done
+
+if [ -n "${url}" ]; then
+  echo "spec-room started on ${url}"
 else
-  nohup bun run "${ROOT}/src/server.ts" >"${ROOT}/data/server.log" 2>&1 &
-  sleep 1
-  echo "spec-room started on http://127.0.0.1:${PORT}"
+  echo "spec-room failed to start — see ${LOG}" >&2
+  exit 1
 fi
