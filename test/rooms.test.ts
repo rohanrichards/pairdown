@@ -7,10 +7,15 @@ const dir = () => join(tmpdir(), `rooms-${Math.random().toString(36).slice(2)}`)
 
 test("a created room appears in the list and can be fetched", () => {
   const rooms = new Rooms(dir());
-  const info = rooms.create("Multi room", "sess-1");
+  const info = rooms.create("Multi room");
   expect(info.id).toMatch(/^[a-z0-9]{8}$/);
   expect(rooms.list().map((r) => r.id)).toContain(info.id);
   expect(rooms.get(info.id)).not.toBeNull();
+  // A room is an id, a name and a date. Nothing else is persisted about it —
+  // there was a `session` field no caller ever supplied and no tool ever
+  // showed, and a stored field that is always undefined eventually gets read
+  // by someone who assumes it means something.
+  expect(Object.keys(info).sort()).toEqual(["createdAt", "id", "name"]);
 });
 
 test("renaming keeps the id, so a shared link never breaks", () => {

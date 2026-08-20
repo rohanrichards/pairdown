@@ -2,7 +2,7 @@ import { Room } from "./room";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-export type RoomInfo = { id: string; name: string; createdAt: string; session?: string };
+export type RoomInfo = { id: string; name: string; createdAt: string };
 
 // Generate exactly 8 characters from [a-z0-9]
 // Guarantees length by repeatedly calling toString(36) until we have enough characters
@@ -27,8 +27,8 @@ export class Rooms {
   private fileFor(id: string) { return join(this.dir, `${id}.bin`); }
   private flush() { writeFileSync(this.indexFile, JSON.stringify(this.index, null, 2)); }
 
-  create(name: string, session?: string): RoomInfo {
-    const info: RoomInfo = { id: newId(), name, createdAt: new Date().toISOString(), session };
+  create(name: string): RoomInfo {
+    const info: RoomInfo = { id: newId(), name, createdAt: new Date().toISOString() };
     this.index.push(info);
     this.flush();
     const room = Room.load(info.id, this.fileFor(info.id), name);
