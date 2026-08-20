@@ -15,6 +15,7 @@ import { Table, Strikethrough, TaskList } from "@lezer/markdown";
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 import { yCollab } from "y-codemirror.next";
+import { blockRanges } from "./blocks.js";
 
 // ---- identity ---------------------------------------------------------------
 
@@ -310,11 +311,27 @@ function remeasureOnResize(el, view, key) {
  * and a half per block, which is why clicking below three diagrams landed four
  * lines out. The spacing lives on this outer element as padding instead.
  */
-function blockShell(inner) {
+function blockShell(inner, kind) {
   const outer = document.createElement("div");
-  outer.className = "embed-shell";
+  outer.className = "embed-shell cm-block";
   outer.appendChild(inner);
+  outer.appendChild(makeBlockButton(kind));
   return outer;
+}
+
+/**
+ * The one button the hover toolbar carries for now. It does not open a
+ * comment yet — that wiring is a later task's job — it only needs to appear
+ * on the block the pointer is over and stay out of the way otherwise.
+ */
+function makeBlockButton(kind) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "blockbtn";
+  btn.title = "Comment on this " + kind;
+  btn.textContent = "comment";
+  btn.onclick = (e) => e.stopPropagation();
+  return btn;
 }
 
 class MermaidWidget extends WidgetType {
@@ -325,7 +342,7 @@ class MermaidWidget extends WidgetType {
     const wrap = document.createElement("div");
     wrap.className = "embed embed-mermaid";
     wrap.textContent = "rendering diagram…";
-    const shell = blockShell(wrap);
+    const shell = blockShell(wrap, "fence");
     remeasureOnResize(shell, view, this.key);
     loadMermaid()
       .then((mermaid) => mermaid.render("mmd-" + mermaidSeq++, this.source))
@@ -353,7 +370,7 @@ class MarkupWidget extends WidgetType {
   toDOM(view) {
     const wrap = document.createElement("div");
     wrap.className = "embed embed-" + this.kind;
-    const shell = blockShell(wrap);
+    const shell = blockShell(wrap, "fence");
     remeasureOnResize(shell, view, this.key);
     try {
       if (this.kind === "html") {
@@ -385,7 +402,7 @@ class ImageWidget extends WidgetType {
   toDOM(view) {
     const wrap = document.createElement("div");
     wrap.className = "embed embed-image";
-    const shell = blockShell(wrap);
+    const shell = blockShell(wrap, "image");
     remeasureOnResize(shell, view, this.key);
     // http(s) and data: only — no javascript: or file: URLs from a shared doc
     if (!/^(https?:|data:image\/)/i.test(this.url)) {
@@ -462,7 +479,7 @@ class TableWidget extends WidgetType {
   toDOM(view) {
     const wrap = document.createElement("div");
     wrap.className = "embed embed-table";
-    const shell = blockShell(wrap);
+    const shell = blockShell(wrap, "table");
     remeasureOnResize(shell, view, this.key);
     try {
       const lines = this.source.split("\n").filter((l) => l.trim() !== "");
@@ -587,6 +604,39 @@ const renderBlocks = StateField.define({
   provide: (f) => EditorView.decorations.from(f),
 });
 
+// ---- hover comment toolbar ---------------------------------------------------
+// One block, one section: blockRanges (client/blocks.js) is a plain scan over
+// the document text, independent of the syntax tree renderBlocks above uses.
+// A diagram, table or image already gets its hover button from blockShell,
+// since those are replaced by a widget that owns its own DOM. Everything
+// else — a heading, a paragraph, a list, a fence not rendered as one of those
+// — is still plain source lines, and gets its button here instead: the first
+// line of the block is given the "cm-block" class plus the button widget, so
+// the same CSS reveals it on hover either way.
+class BlockButtonWidget extends WidgetType {
+  constructor(kind) { super(); this.kind = kind; }
+  eq(other) { return other.kind === this.kind; }
+  toDOM() { return makeBlockButton(this.kind); }
+}
+
+function buildBlockToolbar(state) {
+  const items = [];
+  for (const b of blockRanges(state.doc.toString())) {
+    items.push(Decoration.line({ class: "cm-block" }).range(b.from));
+    items.push(Decoration.widget({ widget: new BlockButtonWidget(b.kind), side: 1 }).range(b.from));
+  }
+  return Decoration.set(items, true);
+}
+
+// A StateField, not a ViewPlugin — the same reason renderBlocks above is one.
+const blockToolbar = StateField.define({
+  create: (state) => buildBlockToolbar(state),
+  update(deco, tr) {
+    return tr.docChanged ? buildBlockToolbar(tr.state) : deco.map(tr.changes);
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
 const theme = EditorView.theme({
   "&": { height: "100%", fontSize: "18px", backgroundColor: "transparent", color: "var(--ink)" },
   "&.cm-focused": { outline: "none" },
@@ -605,6 +655,20 @@ const theme = EditorView.theme({
   ".cm-activeLine": { backgroundColor: "transparent" },
   ".cm-selectionBackground, ::selection": { backgroundColor: "var(--accent-bg) !important" },
   ".embed-shell": { padding: "1.1rem 0" },
+  // The hover comment toolbar. cm-block marks the hoverable area — either a
+  // plain-text line (heading, paragraph, list) or an .embed-shell (diagram,
+  // table, image) — and the button lives inside it, revealed on :hover.
+  // Positioned absolute, so it adds no height of its own; only .embed-shell's
+  // own padding above sets the block's rhythm.
+  ".cm-block": { position: "relative" },
+  ".cm-block .blockbtn": {
+    position: "absolute", right: "0", top: "0", opacity: "0",
+    transition: "opacity .12s", fontFamily: "var(--mono)", fontSize: ".6rem",
+    color: "var(--accent-ink)", background: "var(--accent-bg)",
+    border: "1px solid var(--accent)", borderRadius: "3px",
+    padding: ".1rem .35rem", cursor: "pointer", zIndex: "1",
+  },
+  ".cm-block:hover .blockbtn": { opacity: "1" },
   ".embed": {
     margin: "0", padding: "1rem", borderRadius: "4px",
     background: "var(--card)", border: "1px solid var(--rule)",
@@ -689,6 +753,7 @@ const view = new EditorView({
       hideMarkers,
       lineStyles,
       renderBlocks,
+      blockToolbar,
       highlightField,
       theme,
       yCollab(content, awareness, { undoManager }),
