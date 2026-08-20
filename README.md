@@ -42,7 +42,10 @@ Once attached, a session calls `room_list` to see what rooms exist,
 `search`, `edit`, `append`, `insert`, `comments`, `reply`, and `resolve` to
 work in it — the same tools regardless of which room is joined. `@claude` in
 a comment notifies the session immediately; an untagged comment waits until
-someone presses "send to claude".
+someone presses "send to claude" — this additionally needs the channels
+research preview, and on Team/Enterprise an org admin must set
+`channelsEnabled`; without it the notification is dropped silently and
+everything else still works.
 
 ## Test
 

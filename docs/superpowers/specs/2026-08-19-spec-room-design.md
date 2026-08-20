@@ -60,8 +60,9 @@ index is how a person reaches or creates a room without the CLI at all.
 
 ## An agent is a participant you invite
 
-A room with no agent is an ordinary room, not a broken one. Claude is attached by
-default when a spec is published to share, and absent otherwise.
+A room with no agent is an ordinary room, not a broken one. An agent is
+attached when a session joins the room, and absent otherwise — a participant
+brought in, never a fixture the room starts with.
 
 "No agent here" is simply a client that is not connected. The companion publishes
 its own state on the awareness channel, under an `agent` field carrying a `busy`
