@@ -88,3 +88,76 @@ objections to.
 | Two-dimensional facts | in a table |
 | Sections describing structure | have a diagram |
 | Section read out of order | still makes sense |
+
+## Diagrams
+
+A diagram is not a picture of the prose. It is a different way of storing the
+same information, and it earns its place only when that difference does work.
+
+### 10. A diagram must remove search, not decorate
+
+Larkin and Simon's finding is the whole basis for this: a diagram beats a
+paragraph because information is indexed by **location**, so the fact you need
+and the cue to the next step sit adjacent to each other and the reader traverses
+instead of searching. The advantage is computational, not aesthetic — the same
+information, indexed so that inference is cheap.
+
+The test: name a question a reader can answer by looking, that the prose made
+them hold three things in their head to answer. If there isn't one, it is
+decoration.
+
+### 11. Decoration is not neutral — it costs
+
+Adding illustrations that carry no information makes readers **like** a document
+more and learn from it no better. Worse, a graphic that grabs attention without
+paying it back competes for the same working memory the content needs.
+
+So a diagram that survives only because it looks good is a net loss. If removing
+it loses no information, remove it.
+
+### 12. One idea per diagram
+
+If you cannot name what it shows in a single clause without using "and", it is
+two diagrams.
+
+### 13. Label in place. Never use a legend
+
+Text goes next to the thing it names. A legend makes the reader hold a mapping in
+working memory and look back and forth for every element — the cost the diagram
+was supposed to remove.
+
+### 14. Encode by position or length, never area or colour
+
+Position along a common scale is read 1.4 to 2.5 times more accurately than
+length, and about twice as accurately as angle. Area is worst of the common
+encodings.
+
+So: no pie charts, no bubble sizes, no colour ramps for anything a reader must
+compare. Colour distinguishes categories; it does not carry magnitude.
+
+### 15. Write for an expert and cut the scaffolding
+
+Explanations embedded in a diagram help a novice and are redundant load for
+someone who already has the schema. This audience knows what a websocket is.
+Label the parts; do not explain the parts.
+
+### 16. Use HTML for anything text-heavy, SVG for geometry
+
+Hand-positioned SVG text is guesswork: the author cannot measure what the browser
+will render, so labels clip and boxes misalign. This has happened in this project
+more than once. HTML lays text out and wraps it; SVG is for shapes, arrows and
+spatial relationships. Both must read correctly in light and dark, which means
+colours come from the palette tokens rather than from literals.
+
+### Checkable summary
+
+| Rule | Threshold |
+|---|---|
+| Answers a question the prose made you hold in your head | at least one |
+| Carries information you would otherwise have to state | always |
+| Ideas per diagram | one |
+| Legends | zero |
+| Magnitude encoded as area, angle or colour | never |
+| Explaining what the audience already knows | never |
+| Text positioned by hand in SVG | never |
+| Readable in both light and dark | always |
