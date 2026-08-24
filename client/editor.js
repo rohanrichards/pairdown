@@ -1096,16 +1096,113 @@ renderPeople();
 // state is `{ busy: false }` when idle, `{ busy: true, comment_id }` when
 // notified about one thread, or `{ busy: true }` while working a batched
 // review, so it doubles as the source for the #thinking indicator.
-function renderAgentPresence() {
-  let agent = null;
+// ---- the agents in the room -------------------------------------------------
+// A room can hold several, each brought by a different person and each carrying
+// that person's context. So the browser has to show who is here and let a person
+// address one of them, rather than assuming a single "claude".
+
+// Agents get their own palette so they never collide with a human's colour.
+// Violet first, which keeps a lone default agent looking as it always has.
+const AGENT_PALETTE = ["#6d4bd6", "#0f766e", "#9a3412", "#1d4ed8", "#7c2d63"];
+
+// Assigned by order of first appearance, not by hashing the handle. Hashing
+// collides: with five colours, `claude` and `maple` landed on the same one and
+// two agents in a room were indistinguishable, which is the whole point of
+// giving them colours. Order guarantees the first five are distinct.
+const agentOrder = [];
+
+function agentColor(handle) {
+  let i = agentOrder.indexOf(handle);
+  if (i === -1) { agentOrder.push(handle); i = agentOrder.length - 1; }
+  return AGENT_PALETTE[i % AGENT_PALETTE.length];
+}
+
+// Handles seen at any point this session. An agent that has since detached must
+// keep its styling on the comments it already wrote, so this only ever grows.
+// `claude` is always in it, because rooms predating handles used that name.
+const knownAgents = new Set(["claude"]);
+
+/**
+ * Every agent currently attached, deduplicated by handle.
+ *
+ * The previous version kept whichever agent state happened to iterate last,
+ * which silently showed one of several. Collecting them all is the fix.
+ */
+function attachedAgents() {
+  const out = [];
   awareness.getStates().forEach((state, clientId) => {
     if (clientId === doc.clientID) return;
-    if (state.agent) agent = state.agent;
+    const a = state.agent;
+    if (!a) return;
+    const handle = String(a.handle || "claude").toLowerCase();
+    knownAgents.add(handle);
+    const seen = out.find((x) => x.handle === handle);
+    if (seen) { seen.busy = seen.busy || Boolean(a.busy); return; }
+    out.push({
+      handle,
+      label: String(a.label || handle),
+      busy: Boolean(a.busy),
+      comment_id: a.comment_id,
+    });
   });
-  el("agentdot").className = "dot " + (agent ? "on" : "off");
-  el("agentstate").textContent = agent ? "agent attached" : "no agent attached";
-  el("agentstate").classList.toggle("muted", !agent);
-  setAgentBusy(Boolean(agent && agent.busy), agent && agent.comment_id);
+  return out;
+}
+
+/** Insert a mention into a composer, so a person never has to guess a handle. */
+function askChips(container, textarea) {
+  const agents = attachedAgents();
+  if (!container) return;
+  if (!agents.length) { container.replaceChildren(); return; }
+  const label = document.createElement("span");
+  label.className = "asklabel";
+  label.textContent = "ask";
+  const chips = agents.map((a) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "askchip";
+    b.style.borderColor = agentColor(a.handle);
+    b.style.color = agentColor(a.handle);
+    b.textContent = "@" + a.handle;
+    b.title = a.label;
+    b.onclick = (e) => {
+      e.preventDefault();
+      const at = "@" + a.handle + " ";
+      if (!textarea.value.includes("@" + a.handle)) {
+        textarea.value = textarea.value ? textarea.value.trimEnd() + " " + at : at;
+      }
+      textarea.focus();
+    };
+    return b;
+  });
+  container.replaceChildren(label, ...chips);
+}
+
+function renderAgentPresence() {
+  const agents = attachedAgents();
+  el("agentdot").className = "dot " + (agents.length ? "on" : "off");
+  el("agentstate").textContent =
+    agents.length === 0 ? "no agent attached"
+    : agents.length === 1 ? "1 agent"
+    : `${agents.length} agents`;
+  el("agentstate").classList.toggle("muted", agents.length === 0);
+
+  const strip = el("agents");
+  if (strip) {
+    strip.replaceChildren(...agents.map((a) => {
+      const c = document.createElement("span");
+      c.className = "chip agentchip" + (a.busy ? " busy" : "");
+      c.style.borderColor = agentColor(a.handle);
+      c.style.color = agentColor(a.handle);
+      c.textContent = a.label + (a.busy ? " · working" : "");
+      c.title = "Say @" + a.handle + " in a comment to ask this one";
+      return c;
+    }));
+  }
+
+  const busy = agents.find((a) => a.busy);
+  setAgentBusy(Boolean(busy), busy && busy.comment_id);
+  refreshSend();
+  askChips(el("askrow"), el("ctext"));
 }
 awareness.on("change", renderAgentPresence);
 renderAgentPresence();
@@ -1209,7 +1306,9 @@ const AGENT_ICON =
   '<svg class="cmt-agent-icon" viewBox="0 0 12 12" aria-hidden="true">' +
   '<path d="M6 0.6 L7.4 4.6 L11.4 6 L7.4 7.4 L6 11.4 L4.6 7.4 L0.6 6 L4.6 4.6 Z"/></svg>';
 
-const isAgent = (name) => String(name).toLowerCase() === AGENT;
+// Any handle seen in this room, so a comment written by `ren` is styled as an
+// agent's just as one written by `claude` is.
+const isAgent = (name) => knownAgents.has(String(name).toLowerCase());
 
 function avatar(name) {
   const s = document.createElement("span");
@@ -1529,7 +1628,7 @@ function openPanel(id) {
   const form = document.createElement("div");
   form.className = "panel-reply";
   const ta = document.createElement("textarea");
-  ta.placeholder = "Reply. Mention @claude to reach the session now.";
+  ta.placeholder = "Reply. Name an agent with @ to ask it.";
   form.appendChild(ta);
   const send = document.createElement("button");
   send.textContent = "Reply";
@@ -1669,25 +1768,45 @@ function pendingForAgent() {
     const replies = m.get("replies");
     const last = replies && replies.length ? replies.get(replies.length - 1) : null;
     const who = last ? last.author : m.get("author");
-    if (isAgent(who)) continue;
+    if (isAgent(who)) continue;  // an agent's own reply is not waiting on one
     out.push(m.get("id"));
   }
   return out;
 }
 
 function refreshSend() {
-  const btn = el("sendclaude");
-  if (!btn) return;
+  const row = el("sendrow");
+  if (!row) return;
   const n = pendingForAgent().length;
-  btn.disabled = n === 0;
-  btn.textContent = n === 0 ? "send to claude" : `send to claude · ${n}`;
-  btn.title =
-    n === 0
-      ? "Nothing waiting. Untagged comments gather here until you send them."
-      : `Send ${n} unanswered comment${n === 1 ? "" : "s"} to the session as one review`;
+  const agents = attachedAgents();
+
+  if (!agents.length) {
+    const b = document.createElement("button");
+    b.disabled = true;
+    b.textContent = "no agent attached";
+    b.title = "Nobody to send to. A session joins a room and appears here.";
+    row.replaceChildren(b);
+    return;
+  }
+
+  // One button per agent: a batch names its recipient, so pressing send in a
+  // room with several wakes exactly one of them.
+  row.replaceChildren(...agents.map((a) => {
+    const b = document.createElement("button");
+    b.className = "sendbtn";
+    b.style.background = agentColor(a.handle);
+    b.style.borderColor = agentColor(a.handle);
+    b.disabled = n === 0;
+    b.textContent = (agents.length === 1 ? "send to " : "→ ") + a.handle + (n ? ` · ${n}` : "");
+    b.title = n === 0
+      ? "Nothing waiting. Comments gather here until you send them."
+      : `Send ${n} unanswered comment${n === 1 ? "" : "s"} to ${a.label} as one review`;
+    b.onclick = () => sendTo(a.handle, b);
+    return b;
+  }));
 }
 
-function sendToClaude() {
+function sendTo(handle, btn) {
   const ids = pendingForAgent();
   if (!ids.length) return;
   meta.set("review", {
@@ -1695,14 +1814,13 @@ function sendToClaude() {
     by: ME,
     at: new Date().toISOString(),
     count: ids.length,
+    to: handle,
   });
-  const btn = el("sendclaude");
   btn.disabled = true;
   btn.textContent = "sent";
   setTimeout(refreshSend, 2500);
 }
 
-el("sendclaude").onclick = sendToClaude;
 comments.observeDeep(refreshSend);
 refreshSend();
 view.scrollDOM.addEventListener("scroll", scheduleLayout, { passive: true });

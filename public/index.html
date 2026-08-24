@@ -136,6 +136,31 @@
   @keyframes pulse { 0%,100% { opacity:.25; transform:scale(.8) } 50% { opacity:1; transform:scale(1.15) } }
   @media (prefers-reduced-motion: reduce) { #thinking i { animation: none; opacity: 1; } }
 
+  /* ---- agents in the room ---- */
+  /* A room can hold several, each brought by a different person. Each gets its
+     own colour from a palette kept separate from the human one, so an agent is
+     never mistaken for a person and two agents are never mistaken for each
+     other. */
+  #agents { display: flex; gap: .35rem; flex-wrap: wrap; }
+  .agentchip { background: transparent; }
+  .agentchip.busy { animation: agentpulse 1.4s ease-in-out infinite; }
+  @keyframes agentpulse { 0%,100% { opacity: 1 } 50% { opacity: .55 } }
+  @media (prefers-reduced-motion: reduce) { .agentchip.busy { animation: none } }
+
+  #sendrow { display: flex; gap: .3rem; margin-right: .4rem; }
+  #sendrow button { color: var(--paper); }
+  #sendrow button:disabled { opacity: .4; cursor: default; }
+
+  /* The composer says who is here rather than making a person guess a handle. */
+  #askrow { display: flex; align-items: center; gap: .3rem; flex-wrap: wrap;
+            margin-bottom: .4rem; }
+  #askrow:empty { display: none; }
+  .asklabel { font-family: var(--mono); font-size: .58rem; letter-spacing: .1em;
+              text-transform: uppercase; color: var(--faint); }
+  .askchip { font-family: var(--mono); font-size: .62rem; padding: .1rem .38rem;
+             border: 1px solid; border-radius: 999px; background: transparent;
+             cursor: pointer; }
+
   /* ---- comment cards ---- */
   .cmt-empty { color: var(--faint); font-size: .84rem; line-height: 1.6; padding-top: .6rem; }
   .cmt {
@@ -266,7 +291,8 @@
   </div>
   <span class="grow"></span>
   <div id="people"></div>
-  <button id="sendclaude" disabled>send to claude</button>
+  <div id="agents"></div>
+  <div id="sendrow"></div>
   <button class="ghost" id="rename">name</button>
 </header>
 
@@ -285,7 +311,8 @@
 <div id="panel" hidden></div>
 
 <div id="composer">
-  <textarea id="ctext" placeholder="Comment on the selection. Mention @claude to ask the attached session."></textarea>
+  <div id="askrow"></div>
+  <textarea id="ctext" placeholder="Comment on the selection. Name an agent with @ to ask it."></textarea>
   <div class="row">
     <button id="cadd">Comment</button>
     <button class="ghost" id="ccancel">Cancel</button>
