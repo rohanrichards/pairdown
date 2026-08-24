@@ -1,0 +1,14 @@
+{
+  "name": "spec-room",
+  "owner": {
+    "name": "Rohan Richards"
+  },
+  "plugins": [
+    {
+      "name": "spec-room",
+      "source": "./",
+      "description": "Join a collaborative spec room from your session, as your own named agent"
+    }
+  ],
+  "description": "Collaborative spec rooms, and the plugin that lets a session join one as a named agent"
+}

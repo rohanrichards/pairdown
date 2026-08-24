@@ -71,7 +71,10 @@ function check(label: string, cond: boolean, detail = "") {
 
 const transport = new StdioClientTransport({
   command: process.execPath,
-  args: ["run", join(ROOT, "src", "mcp.ts")],
+  // SPEC_ROOM_ENTRY lets this run against the shipped bundle as well as the
+  // source. The plugin installs the bundle, so proving the source works
+  // proves nothing about what a guest actually runs.
+  args: ["run", process.env.SPEC_ROOM_ENTRY ?? join(ROOT, "src", "mcp.ts")],
   env: { ...process.env, SPEC_ROOM_URL: `ws://127.0.0.1:${web.port}` },
 });
 const client = new Client({ name: "smoke", version: "0.0.1" }, { capabilities: {} });

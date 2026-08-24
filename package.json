@@ -7,7 +7,9 @@
   "scripts": {
     "serve": "bun run src/server.ts",
     "mcp": "bun run src/mcp.ts",
-    "build": "bun build client/editor.js --outdir public/js --splitting --format esm --target browser"
+    "build": "bun build client/editor.js --outdir public/js --splitting --format esm --target browser",
+    "build:agent": "bun build src/mcp.ts --target bun --outfile dist/mcp.js",
+    "build:all": "bun run build && bun run build:agent"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.2",

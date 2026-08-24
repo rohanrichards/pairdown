@@ -2,7 +2,10 @@
   "mcpServers": {
     "spec-room": {
       "command": "bun",
-      "args": ["run", "${CLAUDE_PLUGIN_ROOT}/src/mcp.ts"]
+      "args": [
+        "run",
+        "${CLAUDE_PLUGIN_ROOT}/dist/mcp.js"
+      ]
     }
   }
 }
