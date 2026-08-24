@@ -23,6 +23,7 @@ import * as Y from "yjs";
 import { RoomClient } from "./roomclient";
 import { anchorState } from "./anchor";
 import { outlineOf } from "./outline";
+import { addressesMe, agentLabel } from "./address";
 import type { RoomInfo } from "./rooms";
 
 const BASE = process.env.SPEC_ROOM_URL ?? "ws://127.0.0.1:8790";
@@ -36,6 +37,25 @@ const authHeaders = (extra: Record<string, string> = {}): Record<string, string>
     ? { ...extra, authorization: `Bearer ${process.env.SPEC_ROOM_SECRET}` }
     : extra;
 const AGENT_NAME = process.env.SPEC_ROOM_AGENT ?? "claude";
+// Whose context this agent carries. Optional, and shown beside the handle —
+// the handle has to stay unambiguous to type, so it is not the owner's name.
+const AGENT_OWNER = process.env.SPEC_ROOM_OWNER || undefined;
+
+/**
+ * Publish this agent's presence, identity included.
+ *
+ * The handle is what a person types to summon it and the label is what they see,
+ * so both have to reach the browser — a composer cannot offer an agent it does
+ * not know is in the room.
+ */
+function presence(busy: boolean, comment_id?: string): void {
+  room?.setPresence({
+    handle: AGENT_NAME.toLowerCase(),
+    label: agentLabel(AGENT_NAME, AGENT_OWNER),
+    busy,
+    ...(comment_id ? { comment_id } : {}),
+  });
+}
 
 const mcp = new Server(
   { name: "spec-room", version: "0.0.1" },
@@ -314,7 +334,7 @@ async function joinRoom(info: RoomInfo | { id: string }) {
   const next = await RoomClient.connect(BASE, info.id);
   if (room) room.close();
   room = next;
-  room.setPresence({ busy: false });
+  presence(false);
   // On attach, say how much is waiting without acting on it. Still no edits
   // until a person presses send.
   announced.clear();
@@ -454,7 +474,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
     case "reply":
       // the thread has an answer now, so stop showing the working indicator
-      room.setPresence({ busy: false });
+      presence(false);
       return replyTo(room, String(a.comment_id), AGENT_NAME, String(a.text ?? ""))
         ? ok("Reply posted.")
         : ok("No comment with that id.");
@@ -526,7 +546,10 @@ function newestMessage(c: CommentView) {
  */
 function pendingState(c: CommentView, requireMention: boolean): Pending | null {
   if (c.resolved) return null;
-  if (requireMention && !c.forAgent) return null;
+  // Dormant until summoned. `forAgent` is not consulted: the mention is parsed
+  // from the text a person actually wrote, which keeps one source of truth and
+  // means rooms predating handles still work, since they say @claude.
+  if (requireMention && !addressesMe(newestMessage(c).text, AGENT_NAME)) return null;
   const msg = newestMessage(c);
   // our own reply is not a request for our attention
   if (msg.author.toLowerCase() === AGENT_NAME.toLowerCase()) return null;
@@ -557,7 +580,7 @@ function collectPending(): Pending[] {
 const announced = new Map<string, string>();
 
 function notifyMention(p: Pending, isReply: boolean) {
-  room!.setPresence({ busy: true, comment_id: p.id });
+  presence(true, p.id);
   const { open, close } = fence(`on: ${p.where}`);
   mcp
     .notification({
@@ -598,7 +621,7 @@ function sweepMentions(announceNothing = false) {
 
 function notifyBatch(items: Pending[], byRaw: string) {
   if (!items.length) return;
-  room!.setPresence({ busy: true });
+  presence(true);
   const by = safeName(byRaw);
   const body = items
     .map((p, i) => `${i + 1}. [${p.id}] ${p.author} on ${p.where}\n   ${p.text}`)
@@ -634,8 +657,14 @@ function watchRoom(r: RoomClient) {
   lastReview = "";
   r.comments.observeDeep(() => sweepMentions());
   r.meta.observe(() => {
-    const rev = r.meta.get("review") as { id?: string; by?: string } | undefined;
+    const rev = r.meta.get("review") as
+      { id?: string; by?: string; to?: string } | undefined;
     if (!rev || typeof rev !== "object" || !rev.id || rev.id === lastReview) return;
+    // A batch names its recipient, so pressing send in a room with several
+    // agents wakes one of them. No recipient means a client that predates
+    // handles, and only the default handle answers that.
+    const to = (rev.to ?? "claude").toLowerCase();
+    if (to !== AGENT_NAME.toLowerCase()) return;
     lastReview = rev.id;
     const items = collectPending();
     // a batch answers these threads too, so they do not also fire individually

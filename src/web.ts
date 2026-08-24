@@ -231,7 +231,11 @@ export function startWeb(
   rooms: Rooms,
   port: number,
   attempts = 10,
-  secret: string | undefined = process.env.SPEC_ROOM_SECRET,
+  // Read from the environment by the entry point, never here. A library that
+  // reaches for ambient config makes every caller's behaviour depend on what
+  // happens to be exported — which silently gated every test server the first
+  // time a secret was set for a demo.
+  secret?: string,
 ): { port: number; stop(): void } | null {
   for (let i = 0; i < attempts; i++) {
     try {
