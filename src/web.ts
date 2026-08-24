@@ -13,6 +13,9 @@
 // topic.
 import * as Y from "yjs";
 import { Rooms, type RoomInfo } from "./rooms";
+import {
+  gateEnabled, authorised, sessionCookie, gatePage, isHttps, safeReturnTo, safeEqual,
+} from "./gate";
 import { tag, untag, DOC_MSG } from "./frames";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -196,8 +199,17 @@ const INDEX_CSP = [
   "frame-ancestors 'none'",
 ].join("; ");
 
-function htmlResponse(body: string, csp: string): Response {
+const GATE_CSP = [
+  "default-src 'none'",
+  "style-src 'unsafe-inline'",
+  "form-action 'self'",
+  "base-uri 'none'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+function htmlResponse(body: string, csp: string, status = 200): Response {
   return new Response(body, {
+    status,
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Content-Security-Policy": csp,
@@ -215,7 +227,12 @@ function htmlResponse(body: string, csp: string): Response {
  * The document tools matter more than the browser UI, so a failure here is
  * reported and survived rather than fatal.
  */
-export function startWeb(rooms: Rooms, port: number, attempts = 10): { port: number; stop(): void } | null {
+export function startWeb(
+  rooms: Rooms,
+  port: number,
+  attempts = 10,
+  secret: string | undefined = process.env.SPEC_ROOM_SECRET,
+): { port: number; stop(): void } | null {
   for (let i = 0; i < attempts; i++) {
     try {
       const server = Bun.serve<Sock>({
@@ -224,6 +241,47 @@ export function startWeb(rooms: Rooms, port: number, attempts = 10): { port: num
         idleTimeout: 0,
         async fetch(req, srv) {
           const url = new URL(req.url);
+
+          // The gate goes first, ahead of every route including /ws and the
+          // bundle. A door that covers only some entrances is not a door, and
+          // the document travels over /ws.
+          if (gateEnabled(secret)) {
+            if (url.pathname === "/gate") {
+              if (req.method === "POST") {
+                const form = await req.formData().catch(() => null);
+                const key = String(form?.get("key") ?? "");
+                const to = safeReturnTo(String(form?.get("to") ?? "/"));
+                if (!safeEqual(key, secret)) {
+                  return htmlResponse(gatePage(to, true), GATE_CSP, 401);
+                }
+                return new Response(null, {
+                  status: 302,
+                  headers: { location: to, "set-cookie": sessionCookie(secret, isHttps(req)) },
+                });
+              }
+              return htmlResponse(gatePage(safeReturnTo(url.searchParams.get("to")), false), GATE_CSP);
+            }
+            if (!authorised(req, secret)) {
+              // A page request is sent somewhere useful; everything else gets a
+              // status it can act on rather than a page it cannot parse. Decided
+              // by route, not by the Accept header — that header is the client's
+              // to set, and whether the door redirects or refuses should not be.
+              const isPage =
+                url.pathname === "/" ||
+                url.pathname === "/index.html" ||
+                /^\/r\/[a-z0-9]{8}$/.test(url.pathname);
+              if (isPage && req.method === "GET") {
+                const to = url.pathname + url.search;
+                return new Response(null, {
+                  status: 302,
+                  headers: {
+                    location: to === "/" ? "/gate" : "/gate?to=" + encodeURIComponent(to),
+                  },
+                });
+              }
+              return new Response("unauthorised", { status: 401 });
+            }
+          }
 
           if (url.pathname === "/api/rooms" && req.method === "POST") {
             const body = await req.json().catch(() => null) as { name?: string } | null;

@@ -27,6 +27,14 @@ import type { RoomInfo } from "./rooms";
 
 const BASE = process.env.SPEC_ROOM_URL ?? "ws://127.0.0.1:8790";
 const HTTP_BASE = BASE.replace(/^ws/, "http");
+
+// The room server may be behind a shared-secret gate. cloudflared reaches it
+// over loopback, so loopback is not exempt and these calls have to authenticate
+// like any other client.
+const authHeaders = (extra: Record<string, string> = {}): Record<string, string> =>
+  process.env.SPEC_ROOM_SECRET
+    ? { ...extra, authorization: `Bearer ${process.env.SPEC_ROOM_SECRET}` }
+    : extra;
 const AGENT_NAME = process.env.SPEC_ROOM_AGENT ?? "claude";
 
 const mcp = new Server(
@@ -335,7 +343,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   switch (req.params.name) {
     case "room_list": {
       try {
-        const res = await fetch(`${HTTP_BASE}/api/rooms`);
+        const res = await fetch(`${HTTP_BASE}/api/rooms`, { headers: authHeaders() });
         const rooms = (await res.json()) as RoomInfo[];
         return ok(
           rooms.length
@@ -351,6 +359,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       try {
         const res = await fetch(`${HTTP_BASE}/api/rooms`, {
           method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({ name: String(a.name ?? "Untitled") }),
         });
         const info = (await res.json()) as RoomInfo;

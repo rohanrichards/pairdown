@@ -48,7 +48,15 @@ export class RoomClient {
 
   static connect(base: string, roomId: string): Promise<RoomClient> {
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(`${base}/ws?room=${roomId}`);
+      // The server may be behind a shared-secret gate. cloudflared reaches it
+      // over loopback, so loopback cannot be exempt — which means the agent has
+      // to authenticate like any other client. A bearer header rather than a
+      // cookie, because this side has no cookie jar.
+      const secret = process.env.SPEC_ROOM_SECRET;
+      const ws = new WebSocket(
+        `${base}/ws?room=${roomId}`,
+        secret ? ({ headers: { authorization: `Bearer ${secret}` } } as any) : undefined,
+      );
       ws.binaryType = "arraybuffer";
       const client = new RoomClient(ws, roomId);
       let settled = false;
