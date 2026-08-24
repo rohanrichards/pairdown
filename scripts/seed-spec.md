@@ -1,4 +1,4 @@
-# Spec room
+# Pairdown
 
 **A collaborative markdown editor with an agent in the room.** One server holds
 every spec. People open a link and edit together, in the same document, at the
@@ -157,10 +157,10 @@ repository.
 |---|---|
 | `.mcp.json` | The room client the session talks to |
 | `skills/` | When to brainstorm, when to publish, what belongs in a spec |
-| `bin/` | The `spec-room` executable, on `PATH` while enabled |
+| `bin/` | The `pairdown` executable, on `PATH` while enabled |
 | `agents/` | A spec reviewer that reads a room and reports back |
 
-Rejoining a room is `spec-room open <id>`, never a pair of launch flags.
+Rejoining a room is `pairdown open <id>`, never a pair of launch flags.
 
 ## A spec contains no questions
 
@@ -198,7 +198,7 @@ change. Renaming never breaks a link.
 
 ### Who starts the server
 
-The plugin's `spec-room` binary starts the server on demand and leaves it
+The plugin's `pairdown` binary starts the server on demand and leaves it
 running. Later, the same binary points at a deployed service instead of a local
 one, and no client changes.
 

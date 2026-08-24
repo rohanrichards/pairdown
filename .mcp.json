@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "spec-room": {
+    "pairdown": {
       "command": "bun",
       "args": [
         "run",

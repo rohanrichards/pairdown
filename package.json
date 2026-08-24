@@ -1,9 +1,9 @@
 {
-  "name": "spec-room",
+  "name": "pairdown",
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Spike: a collaborative spec document with an attached Claude Code session",
+  "description": "Multiplayer markdown rooms with agents in them",
   "scripts": {
     "serve": "bun run src/server.ts",
     "mcp": "bun run src/mcp.ts",

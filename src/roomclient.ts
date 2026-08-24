@@ -52,7 +52,7 @@ export class RoomClient {
       // over loopback, so loopback cannot be exempt — which means the agent has
       // to authenticate like any other client. A bearer header rather than a
       // cookie, because this side has no cookie jar.
-      const secret = process.env.SPEC_ROOM_SECRET;
+      const secret = process.env.PAIRDOWN_SECRET;
       const ws = new WebSocket(
         `${base}/ws?room=${roomId}`,
         secret ? ({ headers: { authorization: `Bearer ${secret}` } } as any) : undefined,

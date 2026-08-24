@@ -1,6 +1,6 @@
 # Multi-room
 
-Spec-room works, and one document is now the thing stopping it being used for
+Pairdown works, and one document is now the thing stopping it being used for
 real work. This room is the design conversation for fixing that — held in the
 tool, about the tool.
 
@@ -138,7 +138,7 @@ disguised as a rewrite.
 Comment on the option you want. After that, in rough order of how much they
 change the design:
 
-1. **Who starts the room server, and how does a session find it?** A `spec-room`
+1. **Who starts the room server, and how does a session find it?** A `pairdown`
    command you leave running, something started on demand, or a service.
 2. **How does a session end up in a room?** Created by the session, joined by id,
    or resumed from the room's record of its author.

@@ -21,7 +21,7 @@ test("the agent can list, join, read and edit a room over MCP", async () => {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: ["run", join(import.meta.dir, "..", "src", "mcp.ts")],
-    env: { ...process.env, SPEC_ROOM_URL: `ws://127.0.0.1:${web.port}` },
+    env: { ...process.env, PAIRDOWN_URL: `ws://127.0.0.1:${web.port}` },
   });
   const client = new Client({ name: "test", version: "0.0.1" }, { capabilities: {} });
   await client.connect(transport);
@@ -58,7 +58,7 @@ test("a tool call before joining a room explains itself rather than throwing", a
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: ["run", join(import.meta.dir, "..", "src", "mcp.ts")],
-    env: { ...process.env, SPEC_ROOM_URL: `ws://127.0.0.1:${web.port}` },
+    env: { ...process.env, PAIRDOWN_URL: `ws://127.0.0.1:${web.port}` },
   });
   const client = new Client({ name: "test", version: "0.0.1" }, { capabilities: {} });
   await client.connect(transport);
@@ -108,7 +108,7 @@ test("a comment's scope defaults to quote when absent, and prints on read", asyn
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: ["run", join(import.meta.dir, "..", "src", "mcp.ts")],
-    env: { ...process.env, SPEC_ROOM_URL: `ws://127.0.0.1:${web.port}` },
+    env: { ...process.env, PAIRDOWN_URL: `ws://127.0.0.1:${web.port}` },
   });
   const client = new Client({ name: "scope-test", version: "0.0.1" }, { capabilities: {} });
   await client.connect(transport);
@@ -145,7 +145,7 @@ test("once the room server goes away, edit refuses and read says the text is sta
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: ["run", join(import.meta.dir, "..", "src", "mcp.ts")],
-    env: { ...process.env, SPEC_ROOM_URL: `ws://127.0.0.1:${web.port}` },
+    env: { ...process.env, PAIRDOWN_URL: `ws://127.0.0.1:${web.port}` },
   });
   const client = new Client({ name: "drop-test", version: "0.0.1" }, { capabilities: {} });
   await client.connect(transport);

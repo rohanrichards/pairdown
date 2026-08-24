@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# spec-room — start the room server if it is not already up, then report the URL.
+# pairdown — start the room server if it is not already up, then report the URL.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PORT="${SPEC_ROOM_PORT:-8790}"
+PORT="${PAIRDOWN_PORT:-8790}"
 LOG="${ROOT}/data/server.log"
 
 # /api/rooms answers with a JSON array. Checking for the bracket rather than
-# just a 2xx is what tells "spec-room is up" from "something else holds 8790".
+# just a 2xx is what tells "pairdown is up" from "something else holds 8790".
 if [ "$(curl -fsS "http://127.0.0.1:${PORT}/api/rooms" 2>/dev/null | head -c 1)" = "[" ]; then
-  echo "spec-room already running on http://127.0.0.1:${PORT}"
+  echo "pairdown already running on http://127.0.0.1:${PORT}"
   exit 0
 fi
 
 # data/ is gitignored, so a fresh clone has none, and the redirect below then
 # fails inside a backgrounded job — where set -e cannot see it. That printed
-# "spec-room started" over a server that had never started, on the plugin's
+# "pairdown started" over a server that had never started, on the plugin's
 # advertised entry point, on its first run on any new machine.
 mkdir -p "${ROOT}/data"
 nohup bun run "${ROOT}/src/server.ts" >"${LOG}" 2>&1 &
@@ -30,8 +30,8 @@ for _ in $(seq 1 50); do
 done
 
 if [ -n "${url}" ]; then
-  echo "spec-room started on ${url}"
+  echo "pairdown started on ${url}"
 else
-  echo "spec-room failed to start — see ${LOG}" >&2
+  echo "pairdown failed to start — see ${LOG}" >&2
   exit 1
 fi

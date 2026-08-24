@@ -41,12 +41,12 @@ export class Room {
         try {
           renameSync(file, aside);
           process.stderr.write(
-            `spec-room: ${file} is not a readable room state (${e}); moved to ${aside}. ` +
+            `pairdown: ${file} is not a readable room state (${e}); moved to ${aside}. ` +
               `Room ${id} opens empty.\n`,
           );
         } catch (moveErr) {
           process.stderr.write(
-            `spec-room: ${file} is not a readable room state (${e}) and could not be ` +
+            `pairdown: ${file} is not a readable room state (${e}) and could not be ` +
               `moved aside (${moveErr}). Room ${id} opens empty.\n`,
           );
         }
@@ -105,7 +105,7 @@ export class Room {
       writeFileSync(tmp, Y.encodeStateAsUpdate(this.doc));
       renameSync(tmp, this.file);
     } catch (e) {
-      process.stderr.write(`spec-room: save failed for ${this.file}: ${e}\n`);
+      process.stderr.write(`pairdown: save failed for ${this.file}: ${e}\n`);
     }
   }
 }

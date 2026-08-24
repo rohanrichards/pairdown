@@ -1,5 +1,8 @@
 {
-  "name": "spec-room",
-  "description": "Collaborative spec rooms with an optional Claude session in them",
-  "version": "0.1.0"
+  "name": "pairdown",
+  "description": "Multiplayer markdown rooms with agents in them — join one from your session as a named agent",
+  "version": "0.1.0",
+  "author": {
+    "name": "Rohan Richards"
+  }
 }

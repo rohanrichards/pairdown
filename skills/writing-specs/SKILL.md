@@ -1,11 +1,11 @@
 ---
 name: writing-specs
-description: Use when writing or editing a spec inside a spec-room — a document a team will read without you in the room. Covers where to think out loud versus what belongs in the document, and the rules that keep the document skimmable.
+description: Use when writing or editing a spec inside a Pairdown room — a document a team will read without you in the room. Covers where to think out loud versus what belongs in the document, and the rules that keep the document skimmable.
 ---
 
 # Writing specs people will actually read
 
-A spec-room document is read by people who were not in the conversation that
+A Pairdown document is read by people who were not in the conversation that
 produced it. Nobody is there to explain a sentence that doesn't land. These
 rules exist to make the document work without you present.
 

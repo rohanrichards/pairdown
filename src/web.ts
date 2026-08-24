@@ -66,7 +66,7 @@ function indexHtml(rooms: RoomInfo[]): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>spec-room</title>
+<title>Pairdown</title>
 <style>
   :root {
     --paper: #f1f4f0; --card: #fbfcfa; --ink: #171c19; --soft: #5d6662;
@@ -88,6 +88,7 @@ function indexHtml(rooms: RoomInfo[]): string {
   }
   main { max-width: 640px; margin: 0 auto; }
   h1 { font-family: var(--serif); font-weight: 600; font-size: 1.7rem; margin: 0 0 1.6rem; }
+  h1 span { color: var(--faint); font-weight: 500; }
   ul#roomlist { list-style: none; margin: 0 0 2rem; padding: 0; border-top: 1px solid var(--rule); }
   li.room {
     display: flex; align-items: baseline; gap: .7rem; padding: .75rem 0;
@@ -116,7 +117,7 @@ function indexHtml(rooms: RoomInfo[]): string {
 </head>
 <body>
 <main>
-  <h1>spec&#8202;room</h1>
+  <h1>pair<span>down</span></h1>
   ${list}
   <form id="create-form">
     <input id="roomname-input" name="name" placeholder="Room name" autocomplete="off" required>
@@ -359,18 +360,18 @@ export function startWeb(
         },
       });
       if (i > 0) {
-        process.stderr.write(`spec-room: port ${port} busy, using ${server.port}\n`);
+        process.stderr.write(`pairdown: port ${port} busy, using ${server.port}\n`);
       }
       return { port: server.port, stop: () => server.stop(true) };
     } catch (e: any) {
       if (e?.code !== "EADDRINUSE") {
-        process.stderr.write(`spec-room: web server failed to start: ${e}\n`);
+        process.stderr.write(`pairdown: web server failed to start: ${e}\n`);
         return null;
       }
     }
   }
   process.stderr.write(
-    `spec-room: no free port in ${port}-${port + attempts - 1}; ` +
+    `pairdown: no free port in ${port}-${port + attempts - 1}; ` +
       `document tools still work, browser UI unavailable\n`,
   );
   return null;

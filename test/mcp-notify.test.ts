@@ -61,7 +61,7 @@ test("a live @claude comment notifies immediately, dedupes, and a batched review
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: ["run", join(import.meta.dir, "..", "src", "mcp.ts")],
-    env: { ...process.env, SPEC_ROOM_URL: `ws://127.0.0.1:${web.port}` },
+    env: { ...process.env, PAIRDOWN_URL: `ws://127.0.0.1:${web.port}` },
   });
   const client = new Client({ name: "notify-test", version: "0.0.1" }, { capabilities: {} });
 
@@ -139,7 +139,7 @@ test("a viewer's display name and a forged closing marker stay inside the data e
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: ["run", join(import.meta.dir, "..", "src", "mcp.ts")],
-    env: { ...process.env, SPEC_ROOM_URL: `ws://127.0.0.1:${web.port}` },
+    env: { ...process.env, PAIRDOWN_URL: `ws://127.0.0.1:${web.port}` },
   });
   const client = new Client({ name: "envelope-test", version: "0.0.1" }, { capabilities: {} });
   const notes: any[] = [];

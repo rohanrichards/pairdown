@@ -22,7 +22,7 @@
 // for the tunnel, which is the whole of the internet.
 import { timingSafeEqual, createHmac } from "node:crypto";
 
-export const COOKIE = "sr_session";
+export const COOKIE = "pd_session";
 
 /** True when a secret is configured and the gate should be enforced. */
 export function gateEnabled(secret: string | undefined): secret is string {
@@ -44,7 +44,7 @@ export function safeEqual(a: string, b: string): boolean {
  * cannot be reversed into the secret if a cookie leaks.
  */
 export function sessionToken(secret: string): string {
-  return createHmac("sha256", secret).update("spec-room/session/v1").digest("hex");
+  return createHmac("sha256", secret).update("pairdown/session/v1").digest("hex");
 }
 
 /** Read one cookie out of a Cookie header. */
@@ -103,7 +103,7 @@ export function gatePage(returnTo: string, failed: boolean): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>spec-room</title>
+<title>Pairdown</title>
 <style>
   :root { --paper:#f1f4f0; --card:#fbfcfa; --ink:#171c19; --soft:#5d6662;
           --rule:#d5dbd5; --accent:#24479e; --bad:#b0453f;
@@ -117,6 +117,7 @@ export function gatePage(returnTo: string, failed: boolean): string {
   form { background:var(--card); border:1px solid var(--rule); border-radius:6px;
          padding:1.6rem 1.7rem; width:min(24rem,90vw) }
   h1 { font-size:1rem; margin:0 0 .3rem; letter-spacing:-.01em }
+  h1 span { color:var(--soft); font-weight:400 }
   p { font-size:.82rem; color:var(--soft); line-height:1.5; margin:0 0 1.1rem }
   label { display:block; font-family:var(--mono); font-size:.62rem;
           letter-spacing:.1em; text-transform:uppercase; color:var(--soft); margin-bottom:.35rem }
@@ -130,7 +131,7 @@ export function gatePage(returnTo: string, failed: boolean): string {
 </style></head>
 <body>
   <form method="POST" action="/gate">
-    <h1>spec&#8202;room</h1>
+    <h1>pair<span>down</span></h1>
     <p>This room is behind a shared key for a demo. Paste the key you were given.</p>
     <input type="hidden" name="to" value="${to}">
     <label for="key">Key</label>

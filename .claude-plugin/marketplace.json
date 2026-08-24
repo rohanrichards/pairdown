@@ -1,14 +1,14 @@
 {
-  "name": "spec-room",
+  "name": "pairdown",
   "owner": {
     "name": "Rohan Richards"
   },
   "plugins": [
     {
-      "name": "spec-room",
+      "name": "pairdown",
       "source": "./",
-      "description": "Join a collaborative spec room from your session, as your own named agent"
+      "description": "Join a Pairdown room from your session, as your own named agent"
     }
   ],
-  "description": "Collaborative spec rooms, and the plugin that lets a session join one as a named agent"
+  "description": "Multiplayer markdown rooms for people and their agents, and the plugin that lets a session join one"
 }

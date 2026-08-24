@@ -30,10 +30,10 @@ function colorFor(name) {
   return PALETTE[h % PALETTE.length];
 }
 function askName(force) {
-  let n = localStorage.getItem("spec-room.name");
+  let n = localStorage.getItem("pairdown.name");
   if (!n || force) {
     n = (prompt("Your name (shown on comments and your cursor)", n || "") || "").trim();
-    if (n) localStorage.setItem("spec-room.name", n);
+    if (n) localStorage.setItem("pairdown.name", n);
   }
   return n || "anonymous";
 }
@@ -1066,7 +1066,7 @@ attachBlockButtonHover(view);
 
 // Debug handle: lets a test driver (and a console) reach the editor state.
 // Read-only in practice — nothing in the app depends on it.
-window.__specroom = { view, doc, content, comments, awareness };
+window.__pairdown = { view, doc, content, comments, awareness };
 
 // ---- who is here ------------------------------------------------------------
 

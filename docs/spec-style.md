@@ -1,6 +1,6 @@
 # How to write a spec people will actually read
 
-A spec in spec-room has one job: let someone who was not in the design
+A spec in Pairdown has one job: let someone who was not in the design
 conversation understand what is being built, in under two minutes, well enough
 to disagree with it.
 

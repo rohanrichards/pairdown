@@ -18,7 +18,7 @@ import { startWeb } from "./web";
 // resolve from the project root so this runs from any working directory
 const ROOT = dirname(import.meta.dir);
 
-const DATA_DIR = join(tmpdir(), `spec-room-smoke-${Math.random().toString(36).slice(2)}`);
+const DATA_DIR = join(tmpdir(), `pairdown-smoke-${Math.random().toString(36).slice(2)}`);
 const PORT = 8800 + Math.floor(Math.random() * 90);
 
 const HUMAN_LINE = "Written by a person before the agent touched anything.";
@@ -58,7 +58,7 @@ room.append(`# Smoke spec\n\n${HUMAN_LINE}\n\n${TARGET}`);
 
 const web = startWeb(rooms, PORT)!;
 if (!web) {
-  console.error("spec-room: no free port for the room server");
+  console.error("pairdown: no free port for the room server");
   process.exit(1);
 }
 
@@ -71,11 +71,11 @@ function check(label: string, cond: boolean, detail = "") {
 
 const transport = new StdioClientTransport({
   command: process.execPath,
-  // SPEC_ROOM_ENTRY lets this run against the shipped bundle as well as the
+  // PAIRDOWN_ENTRY lets this run against the shipped bundle as well as the
   // source. The plugin installs the bundle, so proving the source works
   // proves nothing about what a guest actually runs.
-  args: ["run", process.env.SPEC_ROOM_ENTRY ?? join(ROOT, "src", "mcp.ts")],
-  env: { ...process.env, SPEC_ROOM_URL: `ws://127.0.0.1:${web.port}` },
+  args: ["run", process.env.PAIRDOWN_ENTRY ?? join(ROOT, "src", "mcp.ts")],
+  env: { ...process.env, PAIRDOWN_URL: `ws://127.0.0.1:${web.port}` },
 });
 const client = new Client({ name: "smoke", version: "0.0.1" }, { capabilities: {} });
 

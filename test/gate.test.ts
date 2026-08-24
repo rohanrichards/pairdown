@@ -129,7 +129,7 @@ test("the websocket upgrade is gated, not just the pages", async () => {
 
 test("a websocket carrying the session cookie connects and receives the room", async () => {
   const s = serve(SECRET);
-  const jar = `sr_session=${sessionToken(SECRET)}`;
+  const jar = `pd_session=${sessionToken(SECRET)}`;
   const opened = await new Promise<boolean>((resolve) => {
     const ws = new WebSocket(`ws://127.0.0.1:${s.web.port}/ws?room=${s.info.id}`, {
       headers: { cookie: jar },
