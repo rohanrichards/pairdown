@@ -47,3 +47,22 @@ Check the draft against the table above. If a section has no heading in the
 last 150 words, split it. If a paragraph runs past four lines, break it with a
 list, a table, or a diagram. If you're still weighing options anywhere in the
 text, that section isn't done — go back to the brainstorm.
+
+## Diagrams
+
+Show it rather than describe it, but only when the picture does work the prose
+cannot. A diagram wins because information is indexed by location, so the reader
+traverses instead of searching — that is the only reason to draw one.
+
+| Rule | Threshold | Why |
+|---|---|---|
+| It answers a question the prose made the reader hold in their head | at least one | That is the whole advantage: location-indexed information makes inference cheap |
+| Decorative graphics | zero | They make a document better liked and no better understood, and they compete for the attention the content needs |
+| Ideas per diagram | one | If naming it needs an "and", it is two diagrams |
+| Legends | zero | A legend puts the mapping back into working memory, which is the cost the diagram was meant to remove |
+| Magnitude by area, angle or colour | never | Position is read up to 2.5x more accurately; area is worst. Colour separates categories, it does not carry size |
+| Explaining what the audience already knows | never | Scaffolding that helps a novice is redundant load for someone who has the schema |
+| Text positioned by hand in SVG | never | You cannot measure what the browser renders, so labels clip. HTML for text, SVG for shapes |
+| Works in light and dark | always | Take colours from the palette tokens, never literals |
+
+The research behind each is in `docs/spec-style.md`.
