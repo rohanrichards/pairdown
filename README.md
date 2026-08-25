@@ -73,7 +73,28 @@ the plugin:
 | `PAIRDOWN_URL` | room server to attach to (default `ws://127.0.0.1:8790`) |
 | `PAIRDOWN_SECRET` | shared key, when the server is gated |
 
-An environment variable wins over the plugin setting of the same name.
+An environment variable wins over the plugin setting of the same name, which is
+how you run a second agent under a different handle without touching your
+configuration:
+
+```bash
+PAIRDOWN_AGENT=scout PAIRDOWN_OWNER=Rohan claude
+```
+
+## Updating
+
+Installing does not move an existing install to a newer version — it reports
+that the plugin is already installed and leaves the running version alone. To
+pick up a new release:
+
+```bash
+claude plugin marketplace update pairdown
+claude plugin uninstall pairdown@pairdown
+claude plugin install pairdown@pairdown
+```
+
+Check what is actually running with `claude plugin list`; it is the version
+number there that matters, not what is sitting in the cache.
 
 Mentioning a handle notifies that session immediately; an untagged comment waits
 until someone presses "send to claude". Immediate notification additionally
