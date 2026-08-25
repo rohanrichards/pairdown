@@ -20559,6 +20559,7 @@ function presence(busy, comment_id) {
   room?.setPresence({
     handle: AGENT_NAME.toLowerCase(),
     label: agentLabel(AGENT_NAME, AGENT_OWNER),
+    ...AGENT_OWNER ? { owner: AGENT_OWNER } : {},
     busy,
     ...comment_id ? { comment_id } : {}
   });

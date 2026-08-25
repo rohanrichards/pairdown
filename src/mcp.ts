@@ -52,6 +52,10 @@ function presence(busy: boolean, comment_id?: string): void {
   room?.setPresence({
     handle: AGENT_NAME.toLowerCase(),
     label: agentLabel(AGENT_NAME, AGENT_OWNER),
+    // The owner travels as its own field as well as inside the label. The
+    // browser pairs an agent with the person who brought it by matching this
+    // against their display name, and it cannot do that by unpicking prose.
+    ...(AGENT_OWNER ? { owner: AGENT_OWNER } : {}),
     busy,
     ...(comment_id ? { comment_id } : {}),
   });

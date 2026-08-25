@@ -16,6 +16,7 @@ import { syntaxHighlighting, HighlightStyle, syntaxTree } from "@codemirror/lang
 import { tags as t } from "@lezer/highlight";
 import { yCollab } from "y-codemirror.next";
 import { blockRanges } from "./blocks.js";
+import { pairParticipants, mentionQuery, mentionCandidates } from "./participants.js";
 import { mountRail } from "./outline-rail.js";
 import { anchorState } from "../src/anchor";
 
@@ -1070,26 +1071,19 @@ window.__pairdown = { view, doc, content, comments, awareness };
 
 // ---- who is here ------------------------------------------------------------
 
-function renderPeople() {
-  const host = el("people");
-  host.innerHTML = "";
+function roomPeople() {
   const seen = new Map();
   awareness.getStates().forEach((state, clientId) => {
     const u = state.user;
     if (!u || !u.name) return;
-    if (!seen.has(u.name)) seen.set(u.name, { ...u, me: clientId === doc.clientID });
+    const mine = clientId === doc.clientID;
+    // Several tabs can carry the same name; keep one row, and let "you" win so
+    // your own chip is marked even when someone else got there first.
+    if (!seen.has(u.name)) seen.set(u.name, { ...u, me: mine });
+    else if (mine) seen.get(u.name).me = true;
   });
-  for (const u of seen.values()) {
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.style.borderColor = u.color;
-    chip.style.color = u.color;
-    chip.textContent = u.name + (u.me ? " (you)" : "");
-    host.appendChild(chip);
-  }
+  return [...seen.values()];
 }
-awareness.on("change", renderPeople);
-renderPeople();
 
 // An agent is "attached" the moment some other awareness state carries an
 // "agent" field — there is no separate server-side boolean for this. That
@@ -1105,22 +1099,29 @@ renderPeople();
 // Violet first, which keeps a lone default agent looking as it always has.
 const AGENT_PALETTE = ["#6d4bd6", "#0f766e", "#9a3412", "#1d4ed8", "#7c2d63"];
 
-// Assigned by order of first appearance, not by hashing the handle. Hashing
-// collides: with five colours, `claude` and `maple` landed on the same one and
-// two agents in a room were indistinguishable, which is the whole point of
-// giving them colours. Order guarantees the first five are distinct.
-const agentOrder = [];
-
-function agentColor(handle) {
-  let i = agentOrder.indexOf(handle);
-  if (i === -1) { agentOrder.push(handle); i = agentOrder.length - 1; }
-  return AGENT_PALETTE[i % AGENT_PALETTE.length];
-}
-
 // Handles seen at any point this session. An agent that has since detached must
 // keep its styling on the comments it already wrote, so this only ever grows.
 // `claude` is always in it, because rooms predating handles used that name.
 const knownAgents = new Set(["claude"]);
+
+// Assigned by sorted position among the handles known here, not by hashing and
+// not by order of arrival.
+//
+// Hashing collided: with five colours, `claude` and `maple` landed on the same
+// one, so two agents in a room were indistinguishable — the exact thing the
+// colours exist to prevent. Order of arrival fixed that but broke something
+// worse: the order awareness states arrive in differs per client and per
+// reload, so Ian and Rohan saw the same agent in different colours and could
+// not talk about "the purple one". Sorting is the same everywhere.
+//
+// The residual case is an agent that has detached: a client that watched it
+// leave still counts its handle, a client that arrived afterwards does not, and
+// the two disagree until the room is reloaded. That only shifts colours for
+// agents no longer in the room.
+function agentColor(handle) {
+  const i = [...knownAgents].sort().indexOf(String(handle).toLowerCase());
+  return AGENT_PALETTE[(i < 0 ? 0 : i) % AGENT_PALETTE.length];
+}
 
 /**
  * Every agent currently attached, deduplicated by handle.
@@ -1141,6 +1142,7 @@ function attachedAgents() {
     out.push({
       handle,
       label: String(a.label || handle),
+      owner: a.owner ? String(a.owner) : undefined,
       busy: Boolean(a.busy),
       comment_id: a.comment_id,
     });
@@ -1177,8 +1179,129 @@ function askChips(container, textarea) {
   container.replaceChildren(label, ...chips);
 }
 
-function renderAgentPresence() {
+/** A small pill for one agent, worn either inside its owner's chip or alone. */
+function agentPill(a) {
+  const pill = document.createElement("i");
+  pill.className = "agentpill" + (a.busy ? " busy" : "");
+  pill.style.borderColor = agentColor(a.handle);
+  pill.style.color = agentColor(a.handle);
+  pill.textContent = a.handle + (a.busy ? " · working" : "");
+  pill.title = "Say @" + a.handle + " in a comment to ask this one";
+  return pill;
+}
+
+// ---- @ autocomplete ---------------------------------------------------------
+// Handles are the one thing in a room you have to get exactly right — a comment
+// saying "@mapel" wakes nobody and looks like the agent ignored you. So the
+// composer offers what is actually in the room rather than asking people to
+// remember it. The matching itself lives in participants.js, where it is tested.
+
+/** Turn a textarea into one that completes @mentions. */
+function attachMentions(ta) {
+  if (!ta || ta.dataset.mentions) return;
+  ta.dataset.mentions = "on";
+
+  const menu = document.createElement("div");
+  menu.className = "mentionmenu";
+  menu.hidden = true;
+  document.body.appendChild(menu);
+
+  let items = [];
+  let active = 0;
+
+  const close = () => { menu.hidden = true; items = []; };
+
+  function place() {
+    const r = ta.getBoundingClientRect();
+    menu.style.left = Math.round(r.left) + "px";
+    menu.style.width = Math.round(r.width) + "px";
+    // Below the box by default, above it when there is no room underneath.
+    const below = window.innerHeight - r.bottom;
+    if (below < menu.offsetHeight + 8) {
+      menu.style.top = Math.round(r.top - menu.offsetHeight - 4) + "px";
+    } else {
+      menu.style.top = Math.round(r.bottom + 4) + "px";
+    }
+  }
+
+  function draw() {
+    menu.replaceChildren(...items.map((it, i) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "mentionrow" + (i === active ? " active" : "");
+      const name = document.createElement("span");
+      name.className = "mentionname";
+      name.textContent = "@" + it.insert;
+      if (it.kind === "agent") name.style.color = agentColor(it.handle);
+      const detail = document.createElement("span");
+      detail.className = "mentiondetail";
+      // Say plainly which rows do something. Mentioning a person is text on a
+      // page; there is no channel that reaches a human here, and a menu that
+      // listed both identically would quietly imply there is.
+      detail.textContent = it.notifies
+        ? (it.busy ? it.detail + " · working" : it.detail)
+        : it.detail + " · not notified";
+      row.append(name, detail);
+      // mousedown, not click: click fires after blur, by which point the menu
+      // has closed and the caret has moved.
+      row.onmousedown = (e) => { e.preventDefault(); accept(i); };
+      return row;
+    }));
+  }
+
+  function accept(i) {
+    const it = items[i];
+    const q = mentionQuery(ta.value, ta.selectionStart);
+    if (!it || !q) return close();
+    const ins = "@" + it.insert + " ";
+    const before = ta.value.slice(0, q.from);
+    ta.value = before + ins + ta.value.slice(q.to);
+    const caret = before.length + ins.length;
+    ta.setSelectionRange(caret, caret);
+    close();
+    ta.focus();
+  }
+
+  function refresh() {
+    const q = mentionQuery(ta.value, ta.selectionStart);
+    if (!q) return close();
+    items = mentionCandidates(q.query, { people: roomPeople(), agents: attachedAgents() });
+    if (!items.length) return close();
+    active = 0;
+    draw();
+    menu.hidden = false;
+    place();
+  }
+
+  ta.addEventListener("input", refresh);
+  ta.addEventListener("click", refresh);
+  ta.addEventListener("blur", close);
+  ta.addEventListener("keydown", (e) => {
+    if (menu.hidden) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      active = (active + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
+      draw();
+      return;
+    }
+    if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); accept(active); return; }
+    if (e.key === "Escape") {
+      // Only the menu closes. Without this the document-level handler would
+      // shut the whole panel on the first Escape.
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+      return;
+    }
+    // Arrow keys that move the caret change which mention is under it.
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") setTimeout(refresh, 0);
+  });
+}
+
+function renderPresence() {
   const agents = attachedAgents();
+  const { participants, orphans } = pairParticipants(roomPeople(), agents);
+
   el("agentdot").className = "dot " + (agents.length ? "on" : "off");
   el("agentstate").textContent =
     agents.length === 0 ? "no agent attached"
@@ -1186,38 +1309,65 @@ function renderAgentPresence() {
     : `${agents.length} agents`;
   el("agentstate").classList.toggle("muted", agents.length === 0);
 
+  // One chip per person, with the agents they brought worn inside it. Two
+  // separate strips made the agents look like they had turned up on their own.
+  el("people").replaceChildren(...participants.map((u) => {
+    const chip = document.createElement("span");
+    chip.className = "chip" + (u.agents.length ? " hasagent" : "");
+    chip.style.borderColor = u.color;
+    chip.style.color = u.color;
+    const who = document.createElement("span");
+    who.textContent = u.name + (u.me ? " (you)" : "");
+    chip.replaceChildren(who, ...u.agents.map(agentPill));
+    if (u.agents.length) {
+      chip.title = u.name + " brought " + u.agents.map((a) => a.handle).join(" and ");
+    }
+    return chip;
+  }));
+
+  // An agent outliving the tab that brought it is a real participant nobody
+  // can see. Show it rather than dropping it, and say whose it was.
   const strip = el("agents");
   if (strip) {
-    strip.replaceChildren(...agents.map((a) => {
+    strip.replaceChildren(...orphans.map((a) => {
       const c = document.createElement("span");
       c.className = "chip agentchip" + (a.busy ? " busy" : "");
       c.style.borderColor = agentColor(a.handle);
       c.style.color = agentColor(a.handle);
       c.textContent = a.label + (a.busy ? " · working" : "");
-      c.title = "Say @" + a.handle + " in a comment to ask this one";
+      c.title = a.owner
+        ? a.owner + " is not in the room, but their agent still is. Say @" + a.handle + " to ask it."
+        : "Say @" + a.handle + " in a comment to ask this one";
       return c;
     }));
   }
 
   const busy = agents.find((a) => a.busy);
-  setAgentBusy(Boolean(busy), busy && busy.comment_id);
+  setAgentBusy(Boolean(busy), busy && busy.comment_id, busy && busy.handle);
   refreshSend();
   askChips(el("askrow"), el("ctext"));
 }
-awareness.on("change", renderAgentPresence);
-renderAgentPresence();
+attachMentions(el("ctext"));
+awareness.on("change", renderPresence);
+renderPresence();
 
 el("rename").onclick = () => {
   ME = askName(true);
   awareness.setLocalStateField("user", { name: ME, color: colorFor(ME), colorLight: colorFor(ME) + "33" });
-  renderPeople();
+  renderPresence();
 };
 
 // ---- agent activity ---------------------------------------------------------
 
-function setAgentBusy(busy, commentId) {
+function setAgentBusy(busy, commentId, who) {
   busyFor = busy ? (commentId ?? true) : null;
-  el("thinking").hidden = !busy;
+  const thinking = el("thinking");
+  // Name whoever is actually working. "Claude is working" was fine when there
+  // could only be one; in a room holding several it tells you nothing about
+  // which of them is busy, or whose.
+  const label = thinking.querySelector("span");
+  if (label) label.textContent = (who || "Claude") + " is working…";
+  thinking.hidden = !busy;
   render();
 }
 
@@ -1504,8 +1654,14 @@ function layoutCards() {
   if (!views.length) {
     const empty = document.createElement("p");
     empty.className = "cmt-empty";
+    // Name an agent that is actually here. Telling someone to say "@claude" in
+    // a room whose agents are called maple and ren sends them to nobody.
+    const here = attachedAgents();
+    const who = here.length ? "@" + here[0].handle : "@claude";
     empty.innerHTML =
-      "Select any text to comment on it.<br>Say <b>@claude</b> to ask the session now, or leave notes and press <b>send to claude</b> when you are done.";
+      "Select any text to comment on it.<br>Say <b>" + who +
+      "</b> to ask" + (here.length > 1 ? " one of them" : "") +
+      " now, or leave notes and press <b>send to claude</b> when you are done.";
     host.appendChild(empty);
   }
 
@@ -1629,6 +1785,7 @@ function openPanel(id) {
   form.className = "panel-reply";
   const ta = document.createElement("textarea");
   ta.placeholder = "Reply. Name an agent with @ to ask it.";
+  attachMentions(ta);
   form.appendChild(ta);
   const send = document.createElement("button");
   send.textContent = "Reply";
