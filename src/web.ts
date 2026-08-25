@@ -16,7 +16,7 @@ import { Rooms, type RoomInfo } from "./rooms";
 import {
   gateEnabled, authorised, sessionCookie, gatePage, isHttps, safeReturnTo, safeEqual,
 } from "./gate";
-import { tag, untag, DOC_MSG } from "./frames";
+import { tag, untag, DOC_MSG, AWARE_MSG } from "./frames";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -228,6 +228,14 @@ function htmlResponse(body: string, csp: string, status = 200): Response {
  * The document tools matter more than the browser UI, so a failure here is
  * reported and survived rather than fatal.
  */
+/**
+ * The newest awareness frame each open socket has sent, per room.
+ *
+ * The server still does not interpret awareness — it never decodes these, it
+ * only hands them back. Entries live exactly as long as the socket does.
+ */
+const lastPresence = new Map<string, Map<object, ArrayBuffer>>();
+
 export function startWeb(
   rooms: Rooms,
   port: number,
@@ -342,6 +350,15 @@ export function startWeb(
             const room = rooms.get(ws.data.room);
             if (!room) return; // room deleted between upgrade and open
             ws.send(tag(DOC_MSG, Y.encodeStateAsUpdate(room.doc)));
+            // Catch the new arrival up on who is already here. Without this a
+            // client only ever learned about a peer by being connected at the
+            // moment that peer announced itself, so an agent that attached and
+            // then sat quietly was invisible to everyone who joined or
+            // reloaded afterwards — while still connected and still able to
+            // answer.
+            for (const frame of lastPresence.get(ws.data.room)?.values() ?? []) {
+              ws.send(frame);
+            }
           },
           message(ws, raw) {
             if (typeof raw === "string") return;
@@ -350,12 +367,29 @@ export function startWeb(
               const room = rooms.get(ws.data.room);
               if (room) Y.applyUpdate(room.doc, payload);
             }
+            if (kind === AWARE_MSG) {
+              // Each awareness frame carries that client's whole current state,
+              // so keeping only the newest per socket is enough to reconstruct
+              // the room for someone arriving late. Copied, because the buffer
+              // handed to us is not ours to hold on to.
+              let seen = lastPresence.get(ws.data.room);
+              if (!seen) lastPresence.set(ws.data.room, (seen = new Map()));
+              seen.set(ws, (raw as ArrayBuffer).slice(0));
+            }
             // Awareness frames are relayed as-is; the server has no cursor of
             // its own and never applies them.
             ws.publish(ws.data.room, raw as ArrayBuffer);
           },
           close(ws) {
             ws.unsubscribe(ws.data.room);
+            // Forget this client's presence rather than replaying it forever.
+            // A crashed agent that kept being announced to every new arrival
+            // would look ready to answer and never be.
+            const seen = lastPresence.get(ws.data.room);
+            if (seen) {
+              seen.delete(ws);
+              if (!seen.size) lastPresence.delete(ws.data.room);
+            }
           },
         },
       });

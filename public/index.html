@@ -143,6 +143,16 @@
      other. */
   #agents { display: flex; gap: .35rem; flex-wrap: wrap; }
   .agentchip { background: transparent; }
+  /* An agent is worn inside its owner's chip, so one participant reads as one
+     thing: the person, and what they brought with them. */
+  .chip.hasagent { display: inline-flex; align-items: center; gap: .3rem;
+                   padding-right: .22rem; }
+  .agentpill {
+    font-style: normal; font-size: .58rem; padding: .04rem .32rem;
+    border: 1px solid; border-radius: 999px; white-space: nowrap;
+  }
+  .agentpill.busy { animation: agentpulse 1.4s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) { .agentpill.busy { animation: none } }
   .agentchip.busy { animation: agentpulse 1.4s ease-in-out infinite; }
   @keyframes agentpulse { 0%,100% { opacity: 1 } 50% { opacity: .55 } }
   @media (prefers-reduced-motion: reduce) { .agentchip.busy { animation: none } }
@@ -160,6 +170,23 @@
   .askchip { font-family: var(--mono); font-size: .62rem; padding: .1rem .38rem;
              border: 1px solid; border-radius: 999px; background: transparent;
              cursor: pointer; }
+
+  /* ---- @ menu ---- */
+  .mentionmenu {
+    position: fixed; z-index: 40; max-height: 190px; overflow-y: auto;
+    background: var(--card); border: 1px solid var(--rule); border-radius: 4px;
+    box-shadow: 0 8px 26px rgba(0,0,0,.18); padding: .2rem;
+  }
+  .mentionrow {
+    display: flex; align-items: baseline; gap: .45rem; width: 100%;
+    background: transparent; border: 0; border-radius: 3px; cursor: pointer;
+    padding: .28rem .4rem; text-align: left; color: var(--ink);
+  }
+  .mentionrow.active { background: var(--accent-bg); }
+  .mentionrow:hover { background: var(--accent-bg); }
+  .mentionname { font-family: var(--mono); font-size: .7rem; }
+  .mentiondetail { font-size: .62rem; color: var(--faint); margin-left: auto;
+                   white-space: nowrap; }
 
   /* ---- comment cards ---- */
   .cmt-empty { color: var(--faint); font-size: .84rem; line-height: 1.6; padding-top: .6rem; }
@@ -299,7 +326,7 @@
 <main>
   <nav id="rail"></nav>
   <div id="editor">
-    <div id="thinking" hidden><i></i> Claude is working…</div>
+    <div id="thinking" hidden><i></i> <span>Claude is working…</span></div>
   </div>
   <aside>
     <h2>Comments</h2>

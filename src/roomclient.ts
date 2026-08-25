@@ -22,6 +22,9 @@ import { locate } from "./room";
 
 export const NOT_CONNECTED = "not connected to the room server — call room_join again";
 
+/** How often presence is republished. Half of y-protocols' 30s outdated timeout, so a peer never reaps a live agent. */
+export const PRESENCE_RENEW_MS = 15_000;
+
 export class RoomClient {
   readonly doc = new Y.Doc();
   readonly content = this.doc.getText("content");
@@ -30,8 +33,9 @@ export class RoomClient {
   readonly awareness = new Awareness(this.doc);
 
   private live = true;
+  private renew: ReturnType<typeof setInterval> | null = null;
 
-  private constructor(private ws: WebSocket, readonly roomId: string) {
+  private constructor(private ws: WebSocket, readonly roomId: string, renewMs = PRESENCE_RENEW_MS) {
     this.doc.on("update", (update: Uint8Array, origin: unknown) => {
       if (origin === "remote" || !this.live) return;
       this.ws.send(tag(DOC_MSG, update));
@@ -41,12 +45,30 @@ export class RoomClient {
       const changed = added.concat(updated, removed);
       this.ws.send(tag(AWARE_MSG, encodeAwarenessUpdate(this.awareness, changed)));
     });
+
+    // Republish presence on a timer. y-protocols drops a peer whose state has
+    // not been refreshed inside its outdated timeout, and it is the owner of a
+    // state that has to do the refreshing. The browser does this for its own
+    // cursor; this client did not, so an agent that attached and then sat
+    // waiting to be summoned aged out of everybody else's room while still
+    // connected — the failure looked exactly like the agent having left.
+    this.renew = setInterval(() => {
+      if (!this.live) return;
+      const state = this.awareness.getLocalState();
+      if (state) this.awareness.setLocalState({ ...state });
+    }, renewMs);
+    // Never hold a process open on our own account.
+    (this.renew as any)?.unref?.();
   }
 
   /** False once the socket has closed. Every write checks it, and so should any caller about to claim an edit landed. */
   get connected() { return this.live; }
 
-  static connect(base: string, roomId: string): Promise<RoomClient> {
+  static connect(
+    base: string,
+    roomId: string,
+    opts: { renewMs?: number } = {},
+  ): Promise<RoomClient> {
     return new Promise((resolve, reject) => {
       // The server may be behind a shared-secret gate. cloudflared reaches it
       // over loopback, so loopback cannot be exempt — which means the agent has
@@ -58,7 +80,7 @@ export class RoomClient {
         secret ? ({ headers: { authorization: `Bearer ${secret}` } } as any) : undefined,
       );
       ws.binaryType = "arraybuffer";
-      const client = new RoomClient(ws, roomId);
+      const client = new RoomClient(ws, roomId, opts.renewMs);
       let settled = false;
       ws.onmessage = (e) => {
         const { kind, payload } = untag(new Uint8Array(e.data as ArrayBuffer));
@@ -122,8 +144,13 @@ export class RoomClient {
   }
 
   close() {
-    this.live = false;
+    if (this.renew) { clearInterval(this.renew); this.renew = null; }
+    // destroy() clears the local state, which emits the update that tells
+    // everyone else this client is gone. That has to travel while the socket
+    // is still live — going dark first meant peers kept a departed agent in
+    // the room until it timed out.
     this.awareness.destroy();
+    this.live = false;
     this.ws.close();
   }
 }
