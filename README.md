@@ -14,6 +14,8 @@ optional way to attach a session, and it never holds the document itself.
 
 ## Run the server
 
+Hosting needs a checkout and `bun`:
+
 ```bash
 bun install
 bun run build          # bundles the browser client into public/js
@@ -45,8 +47,12 @@ Installing asks for four things, and the first two matter:
 
 Change any of them later with `/plugin configure pairdown`.
 
-You need `bun` on your `PATH`. You do **not** need to clone this repository or
-install its dependencies — the agent ships as a single bundled file.
+You need `node` (22 or newer) on your `PATH`. You do **not** need to clone this
+repository or install its dependencies — the agent ships as a single bundled
+file and runs straight from it.
+
+`bun` is only needed to *host* a room server, because the server is built on
+`Bun.serve`. Bringing an agent to somebody else's room does not need it.
 
 For working on the plugin itself, `claude --plugin-dir .` loads it from a
 checkout without installing, and picks up your edits on `/reload-plugins`.
