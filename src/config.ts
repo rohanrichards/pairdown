@@ -7,43 +7,46 @@
 // the plugin has to ask for it at install time rather than hoping somebody
 // reads a README.
 //
-// That gives two ways in, and both have to work:
+// Three ways in, most specific first:
 //
-//   * `PAIRDOWN_*` in the environment — how a script, a test, or anyone running
-//     the server by hand sets it. This is the canonical name.
-//   * `CLAUDE_PLUGIN_OPTION_*` — what Claude Code exports to an MCP subprocess
-//     for each value declared in the plugin manifest's `userConfig`. Sensitive
-//     values arrive only this way, because they are deliberately not allowed
-//     into `${user_config.*}` substitution in .mcp.json.
+//   * `PAIRDOWN_*` — set by hand, for a script, a test, or a second agent under
+//     a different handle for one session. This is the canonical name and it
+//     wins.
+//   * `PAIRDOWN_PLUGIN_*` — what .mcp.json fills in from the plugin's
+//     `userConfig` answers, given at install time.
+//   * `CLAUDE_PLUGIN_OPTION_*` — what Claude Code exports for each `userConfig`
+//     value. Documented as reaching MCP subprocesses; measured, it does not —
+//     an MCP server gets only CLAUDE_PLUGIN_ROOT and CLAUDE_PLUGIN_DATA, while
+//     hooks do get the options. Kept because the hook in scripts/ runs on it,
+//     and because it costs nothing if that gap ever closes.
 //
-// The environment wins, and that is why .mcp.json declares no `env` block. An
-// env block there is applied to the subprocess directly, so mapping
-// `${user_config.agent_handle}` onto PAIRDOWN_AGENT overwrote the variable a
-// user had set for themselves — the plugin's setting silently beat the more
-// specific one. Reading the plugin values under their own names instead leaves
-// a per-session override actually able to override.
+// The distinct `PAIRDOWN_PLUGIN_*` spelling is the whole point of this file.
+// Mapping `${user_config.agent_handle}` straight onto PAIRDOWN_AGENT put the
+// plugin's answer into the subprocess environment under the same name the user
+// uses, so the install-time setting silently beat the more specific one and
+// a per-session override did nothing at all.
 //
 // Read late rather than at import, because tests and the smoke harness set the
 // environment after this module is first loaded.
 
-/** A setting, from its own environment variable or from the plugin's user configuration. */
-function setting(envName: string, optionKey: string): string | undefined {
+/** A setting: set by hand, else configured at install, else absent. */
+function setting(name: string, optionKey: string): string | undefined {
   return (
-    process.env[envName] ||
+    process.env[`PAIRDOWN_${name}`] ||
+    process.env[`PAIRDOWN_PLUGIN_${name}`] ||
     process.env[`CLAUDE_PLUGIN_OPTION_${optionKey}`] ||
     undefined
   );
 }
 
 /** What people type after `@` to summon this agent. */
-export const agentHandle = (): string =>
-  (setting("PAIRDOWN_AGENT", "AGENT_HANDLE") ?? "claude").toLowerCase();
+export const agentHandle = (): string => (setting("AGENT", "AGENT_HANDLE") ?? "claude").toLowerCase();
 
 /** Whose agent this is. Shown beside the handle; never used as the handle itself, which has to stay unambiguous to type. */
-export const agentOwner = (): string | undefined => setting("PAIRDOWN_OWNER", "OWNER");
+export const agentOwner = (): string | undefined => setting("OWNER", "OWNER");
 
 /** The room server to attach to. */
-export const roomUrl = (): string => setting("PAIRDOWN_URL", "SERVER_URL") ?? "ws://127.0.0.1:8790";
+export const roomUrl = (): string => setting("URL", "SERVER_URL") ?? "ws://127.0.0.1:8790";
 
-/** The shared key, when the room server is behind one. Sensitive, so it only ever arrives as an environment variable. */
-export const sharedKey = (): string | undefined => setting("PAIRDOWN_SECRET", "SHARED_KEY");
+/** The shared key, when the room server is behind one. */
+export const sharedKey = (): string | undefined => setting("SECRET", "SHARED_KEY");

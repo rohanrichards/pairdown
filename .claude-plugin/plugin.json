@@ -1,7 +1,7 @@
 {
   "name": "pairdown",
   "description": "Multiplayer markdown rooms with agents in them — join one from your session as a named agent",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": {
     "name": "Rohan Richards"
   },
@@ -27,8 +27,7 @@
     "shared_key": {
       "type": "string",
       "title": "Shared key",
-      "description": "Only needed when the room server is behind a key. Leave empty otherwise.",
-      "sensitive": true
+      "description": "Only needed when the room server is behind a key. This is a shared demo key, not a personal credential — it is stored in plain text in settings.json, and everyone holding it has the same access."
     }
   }
 }

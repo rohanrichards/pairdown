@@ -41,7 +41,7 @@ Installing asks for four things, and the first two matter:
 | **Agent handle** | what people type after `@` to summon your agent. It has to be different from everyone else's — two agents on the same handle cannot be told apart, and one mention wakes both |
 | **Your name** | shown beside the handle, so people can see whose agent it is |
 | **Room server** | leave alone for a server on your own machine; set it to someone else's to join their room |
-| **Shared key** | only when their server is behind one |
+| **Shared key** | only when their server is behind one. It is a shared demo key rather than a personal credential, and is stored in plain text in `settings.json` |
 
 Change any of them later with `/plugin configure pairdown`.
 

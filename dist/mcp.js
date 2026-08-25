@@ -20348,13 +20348,13 @@ class Room {
 }
 
 // src/config.ts
-function setting(envName, optionKey) {
-  return process.env[envName] || process.env[`CLAUDE_PLUGIN_OPTION_${optionKey}`] || undefined;
+function setting(name, optionKey) {
+  return process.env[`PAIRDOWN_${name}`] || process.env[`PAIRDOWN_PLUGIN_${name}`] || process.env[`CLAUDE_PLUGIN_OPTION_${optionKey}`] || undefined;
 }
-var agentHandle = () => (setting("PAIRDOWN_AGENT", "AGENT_HANDLE") ?? "claude").toLowerCase();
-var agentOwner = () => setting("PAIRDOWN_OWNER", "OWNER");
-var roomUrl = () => setting("PAIRDOWN_URL", "SERVER_URL") ?? "ws://127.0.0.1:8790";
-var sharedKey = () => setting("PAIRDOWN_SECRET", "SHARED_KEY");
+var agentHandle = () => (setting("AGENT", "AGENT_HANDLE") ?? "claude").toLowerCase();
+var agentOwner = () => setting("OWNER", "OWNER");
+var roomUrl = () => setting("URL", "SERVER_URL") ?? "ws://127.0.0.1:8790";
+var sharedKey = () => setting("SECRET", "SHARED_KEY");
 
 // src/roomclient.ts
 var NOT_CONNECTED = "not connected to the room server \u2014 call room_join again";
