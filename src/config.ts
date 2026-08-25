@@ -16,6 +16,13 @@
 //     values arrive only this way, because they are deliberately not allowed
 //     into `${user_config.*}` substitution in .mcp.json.
 //
+// The environment wins, and that is why .mcp.json declares no `env` block. An
+// env block there is applied to the subprocess directly, so mapping
+// `${user_config.agent_handle}` onto PAIRDOWN_AGENT overwrote the variable a
+// user had set for themselves — the plugin's setting silently beat the more
+// specific one. Reading the plugin values under their own names instead leaves
+// a per-session override actually able to override.
+//
 // Read late rather than at import, because tests and the smoke harness set the
 // environment after this module is first loaded.
 
