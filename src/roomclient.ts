@@ -19,6 +19,7 @@ import * as Y from "yjs";
 import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from "y-protocols/awareness";
 import { tag, untag, DOC_MSG, AWARE_MSG } from "./frames";
 import { locate } from "./room";
+import { sharedKey } from "./config";
 
 export const NOT_CONNECTED = "not connected to the room server — call room_join again";
 
@@ -74,7 +75,7 @@ export class RoomClient {
       // over loopback, so loopback cannot be exempt — which means the agent has
       // to authenticate like any other client. A bearer header rather than a
       // cookie, because this side has no cookie jar.
-      const secret = process.env.PAIRDOWN_SECRET;
+      const secret = sharedKey();
       const ws = new WebSocket(
         `${base}/ws?room=${roomId}`,
         secret ? ({ headers: { authorization: `Bearer ${secret}` } } as any) : undefined,

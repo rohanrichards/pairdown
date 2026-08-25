@@ -5,7 +5,12 @@
       "args": [
         "run",
         "${CLAUDE_PLUGIN_ROOT}/dist/mcp.js"
-      ]
+      ],
+      "env": {
+        "PAIRDOWN_AGENT": "${user_config.agent_handle}",
+        "PAIRDOWN_OWNER": "${user_config.owner}",
+        "PAIRDOWN_URL": "${user_config.server_url}"
+      }
     }
   }
 }

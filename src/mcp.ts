@@ -24,22 +24,23 @@ import { RoomClient } from "./roomclient";
 import { anchorState } from "./anchor";
 import { outlineOf } from "./outline";
 import { addressesMe, agentLabel } from "./address";
+import { agentHandle, agentOwner, roomUrl, sharedKey } from "./config";
 import type { RoomInfo } from "./rooms";
 
-const BASE = process.env.PAIRDOWN_URL ?? "ws://127.0.0.1:8790";
+const BASE = roomUrl();
 const HTTP_BASE = BASE.replace(/^ws/, "http");
 
 // The room server may be behind a shared-secret gate. cloudflared reaches it
 // over loopback, so loopback is not exempt and these calls have to authenticate
 // like any other client.
-const authHeaders = (extra: Record<string, string> = {}): Record<string, string> =>
-  process.env.PAIRDOWN_SECRET
-    ? { ...extra, authorization: `Bearer ${process.env.PAIRDOWN_SECRET}` }
-    : extra;
-const AGENT_NAME = process.env.PAIRDOWN_AGENT ?? "claude";
+const authHeaders = (extra: Record<string, string> = {}): Record<string, string> => {
+  const key = sharedKey();
+  return key ? { ...extra, authorization: `Bearer ${key}` } : extra;
+};
+const AGENT_NAME = agentHandle();
 // Whose context this agent carries. Optional, and shown beside the handle —
 // the handle has to stay unambiguous to type, so it is not the owner's name.
-const AGENT_OWNER = process.env.PAIRDOWN_OWNER || undefined;
+const AGENT_OWNER = agentOwner();
 
 /**
  * Publish this agent's presence, identity included.

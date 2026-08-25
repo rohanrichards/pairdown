@@ -1138,13 +1138,23 @@ function attachedAgents() {
     const handle = String(a.handle || "claude").toLowerCase();
     knownAgents.add(handle);
     const seen = out.find((x) => x.handle === handle);
-    if (seen) { seen.busy = seen.busy || Boolean(a.busy); return; }
+    // Two sessions can arrive on the same handle — the default one, most
+    // often, because nobody configured either. They are genuinely
+    // indistinguishable: one mention wakes both and they answer over each
+    // other. Collapsing them into one chip and saying nothing hid the problem
+    // in the room where it does the damage, so count them and show it.
+    if (seen) {
+      seen.busy = seen.busy || Boolean(a.busy);
+      seen.count += 1;
+      return;
+    }
     out.push({
       handle,
       label: String(a.label || handle),
       owner: a.owner ? String(a.owner) : undefined,
       busy: Boolean(a.busy),
       comment_id: a.comment_id,
+      count: 1,
     });
   });
   return out;
@@ -1185,8 +1195,11 @@ function agentPill(a) {
   pill.className = "agentpill" + (a.busy ? " busy" : "");
   pill.style.borderColor = agentColor(a.handle);
   pill.style.color = agentColor(a.handle);
-  pill.textContent = a.handle + (a.busy ? " · working" : "");
-  pill.title = "Say @" + a.handle + " in a comment to ask this one";
+  pill.textContent = a.handle + (a.count > 1 ? ` ×${a.count}` : "") + (a.busy ? " · working" : "");
+  pill.title = a.count > 1
+    ? `${a.count} agents are all answering to @${a.handle}. They cannot be told apart, and one mention wakes all of them — each person should set their own handle with /plugin configure pairdown.`
+    : "Say @" + a.handle + " in a comment to ask this one";
+  if (a.count > 1) pill.classList.add("clash");
   return pill;
 }
 
@@ -1239,7 +1252,7 @@ function attachMentions(ta) {
       // page; there is no channel that reaches a human here, and a menu that
       // listed both identically would quietly imply there is.
       detail.textContent = it.notifies
-        ? (it.busy ? it.detail + " · working" : it.detail)
+        ? (it.count > 1 ? `${it.count} agents share this handle` : it.busy ? it.detail + " · working" : it.detail)
         : it.detail + " · not notified";
       row.append(name, detail);
       // mousedown, not click: click fires after blur, by which point the menu
@@ -1302,12 +1315,16 @@ function renderPresence() {
   const agents = attachedAgents();
   const { participants, orphans } = pairParticipants(roomPeople(), agents);
 
-  el("agentdot").className = "dot " + (agents.length ? "on" : "off");
+  // Count sessions, not handles: two agents sharing one handle are still two
+  // agents in the room, and saying "1 agent" while both answer is the very
+  // confusion the ×2 marker exists to clear up.
+  const attached = agents.reduce((n, a) => n + (a.count ?? 1), 0);
+  el("agentdot").className = "dot " + (attached ? "on" : "off");
   el("agentstate").textContent =
-    agents.length === 0 ? "no agent attached"
-    : agents.length === 1 ? "1 agent"
-    : `${agents.length} agents`;
-  el("agentstate").classList.toggle("muted", agents.length === 0);
+    attached === 0 ? "no agent attached"
+    : attached === 1 ? "1 agent"
+    : `${attached} agents`;
+  el("agentstate").classList.toggle("muted", attached === 0);
 
   // One chip per person, with the agents they brought worn inside it. Two
   // separate strips made the agents look like they had turned up on their own.
@@ -1334,8 +1351,11 @@ function renderPresence() {
       c.className = "chip agentchip" + (a.busy ? " busy" : "");
       c.style.borderColor = agentColor(a.handle);
       c.style.color = agentColor(a.handle);
-      c.textContent = a.label + (a.busy ? " · working" : "");
-      c.title = a.owner
+      c.textContent = a.label + (a.count > 1 ? ` ×${a.count}` : "") + (a.busy ? " · working" : "");
+      if (a.count > 1) c.classList.add("clash");
+      c.title = a.count > 1
+        ? `${a.count} agents are all answering to @${a.handle} and cannot be told apart. Each person should set their own handle with /plugin configure pairdown.`
+        : a.owner
         ? a.owner + " is not in the room, but their agent still is. Say @" + a.handle + " to ask it."
         : "Say @" + a.handle + " in a comment to ask this one";
       return c;

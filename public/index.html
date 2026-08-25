@@ -152,6 +152,9 @@
     border: 1px solid; border-radius: 999px; white-space: nowrap;
   }
   .agentpill.busy { animation: agentpulse 1.4s ease-in-out infinite; }
+  /* Several agents answering to one handle: not an error, but nobody can
+     address them individually until it is fixed. */
+  .clash { border-style: dashed !important; }
   @media (prefers-reduced-motion: reduce) { .agentpill.busy { animation: none } }
   .agentchip.busy { animation: agentpulse 1.4s ease-in-out infinite; }
   @keyframes agentpulse { 0%,100% { opacity: 1 } 50% { opacity: .55 } }

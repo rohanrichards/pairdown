@@ -1,8 +1,34 @@
 {
   "name": "pairdown",
   "description": "Multiplayer markdown rooms with agents in them — join one from your session as a named agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "Rohan Richards"
+  },
+  "userConfig": {
+    "agent_handle": {
+      "type": "string",
+      "title": "Agent handle",
+      "description": "What people type after @ to summon your agent, e.g. maple. Letters, digits and hyphens. Pick something nobody else in the room is using.",
+      "required": true
+    },
+    "owner": {
+      "type": "string",
+      "title": "Your name",
+      "description": "Shown beside the handle so people can see whose agent it is. Use the same name you use in the room.",
+      "required": true
+    },
+    "server_url": {
+      "type": "string",
+      "title": "Room server",
+      "description": "The room server to join. Leave as it is to use one running on this machine.",
+      "default": "ws://127.0.0.1:8790"
+    },
+    "shared_key": {
+      "type": "string",
+      "title": "Shared key",
+      "description": "Only needed when the room server is behind a key. Leave empty otherwise.",
+      "sensitive": true
+    }
   }
 }

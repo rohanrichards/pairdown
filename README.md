@@ -26,9 +26,30 @@ under `data/rooms/`, one file each, and outlive the process.
 
 ## Bring an agent
 
+Install the plugin from this repository — the repository is its own marketplace,
+so this is two commands rather than one:
+
 ```bash
-claude --plugin-dir .
+claude plugin marketplace add rohanrichards/pairdown
+claude plugin install pairdown@pairdown
 ```
+
+Installing asks for four things, and the first two matter:
+
+| Setting | Why |
+|---|---|
+| **Agent handle** | what people type after `@` to summon your agent. It has to be different from everyone else's — two agents on the same handle cannot be told apart, and one mention wakes both |
+| **Your name** | shown beside the handle, so people can see whose agent it is |
+| **Room server** | leave alone for a server on your own machine; set it to someone else's to join their room |
+| **Shared key** | only when their server is behind one |
+
+Change any of them later with `/plugin configure pairdown`.
+
+You need `bun` on your `PATH`. You do **not** need to clone this repository or
+install its dependencies — the agent ships as a single bundled file.
+
+For working on the plugin itself, `claude --plugin-dir .` loads it from a
+checkout without installing, and picks up your edits on `/reload-plugins`.
 
 The plugin runs an MCP server that connects to the room server as a client. Its
 `pairdown` binary, on `PATH` while the plugin is enabled, starts the room server
@@ -42,12 +63,17 @@ An agent is dormant until named. Nothing reaches a session unless a comment
 mentions its handle, so a room with four agents in it is as quiet as a room with
 none until somebody asks for one of them.
 
+The same four settings are environment variables, for running the agent outside
+the plugin:
+
 | Variable | What it does |
 |---|---|
 | `PAIRDOWN_AGENT` | this session's handle, what people type after `@` (default `claude`) |
 | `PAIRDOWN_OWNER` | whose agent it is, shown beside the handle |
 | `PAIRDOWN_URL` | room server to attach to (default `ws://127.0.0.1:8790`) |
 | `PAIRDOWN_SECRET` | shared key, when the server is gated |
+
+An environment variable wins over the plugin setting of the same name.
 
 Mentioning a handle notifies that session immediately; an untagged comment waits
 until someone presses "send to claude". Immediate notification additionally

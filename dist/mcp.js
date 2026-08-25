@@ -20347,8 +20347,18 @@ class Room {
   }
 }
 
+// src/config.ts
+function setting(envName, optionKey) {
+  return process.env[envName] || process.env[`CLAUDE_PLUGIN_OPTION_${optionKey}`] || undefined;
+}
+var agentHandle = () => (setting("PAIRDOWN_AGENT", "AGENT_HANDLE") ?? "claude").toLowerCase();
+var agentOwner = () => setting("PAIRDOWN_OWNER", "OWNER");
+var roomUrl = () => setting("PAIRDOWN_URL", "SERVER_URL") ?? "ws://127.0.0.1:8790";
+var sharedKey = () => setting("PAIRDOWN_SECRET", "SHARED_KEY");
+
 // src/roomclient.ts
 var NOT_CONNECTED = "not connected to the room server \u2014 call room_join again";
+var PRESENCE_RENEW_MS = 15000;
 
 class RoomClient {
   ws;
@@ -20359,7 +20369,8 @@ class RoomClient {
   meta = this.doc.getMap("meta");
   awareness = new Awareness(this.doc);
   live = true;
-  constructor(ws, roomId) {
+  renew = null;
+  constructor(ws, roomId, renewMs = PRESENCE_RENEW_MS) {
     this.ws = ws;
     this.roomId = roomId;
     this.doc.on("update", (update, origin) => {
@@ -20373,16 +20384,24 @@ class RoomClient {
       const changed = added.concat(updated, removed);
       this.ws.send(tag(AWARE_MSG, encodeAwarenessUpdate(this.awareness, changed)));
     });
+    this.renew = setInterval(() => {
+      if (!this.live)
+        return;
+      const state = this.awareness.getLocalState();
+      if (state)
+        this.awareness.setLocalState({ ...state });
+    }, renewMs);
+    this.renew?.unref?.();
   }
   get connected() {
     return this.live;
   }
-  static connect(base, roomId) {
+  static connect(base, roomId, opts = {}) {
     return new Promise((resolve, reject) => {
-      const secret = process.env.PAIRDOWN_SECRET;
+      const secret = sharedKey();
       const ws = new WebSocket(`${base}/ws?room=${roomId}`, secret ? { headers: { authorization: `Bearer ${secret}` } } : undefined);
       ws.binaryType = "arraybuffer";
-      const client = new RoomClient(ws, roomId);
+      const client = new RoomClient(ws, roomId, opts.renewMs);
       let settled = false;
       ws.onmessage = (e) => {
         const { kind, payload } = untag(new Uint8Array(e.data));
@@ -20453,8 +20472,12 @@ class RoomClient {
     this.awareness.setLocalStateField("agent", fields);
   }
   close() {
-    this.live = false;
+    if (this.renew) {
+      clearInterval(this.renew);
+      this.renew = null;
+    }
     this.awareness.destroy();
+    this.live = false;
     this.ws.close();
   }
 }
@@ -20550,11 +20573,14 @@ function agentLabel(handle, owner) {
 }
 
 // src/mcp.ts
-var BASE = process.env.PAIRDOWN_URL ?? "ws://127.0.0.1:8790";
+var BASE = roomUrl();
 var HTTP_BASE = BASE.replace(/^ws/, "http");
-var authHeaders = (extra = {}) => process.env.PAIRDOWN_SECRET ? { ...extra, authorization: `Bearer ${process.env.PAIRDOWN_SECRET}` } : extra;
-var AGENT_NAME = process.env.PAIRDOWN_AGENT ?? "claude";
-var AGENT_OWNER = process.env.PAIRDOWN_OWNER || undefined;
+var authHeaders = (extra = {}) => {
+  const key = sharedKey();
+  return key ? { ...extra, authorization: `Bearer ${key}` } : extra;
+};
+var AGENT_NAME = agentHandle();
+var AGENT_OWNER = agentOwner();
 function presence(busy, comment_id) {
   room?.setPresence({
     handle: AGENT_NAME.toLowerCase(),

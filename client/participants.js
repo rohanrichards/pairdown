@@ -108,6 +108,7 @@ export function mentionCandidates(query, { people = [], agents = [] } = {}) {
           detail: a.owner ? `${a.owner}'s agent` : "agent",
           notifies: true,
           busy: Boolean(a.busy),
+          count: a.count ?? 1,
           handle,
           rank: norm(handle).startsWith(q) ? 0 : 1,
         }
