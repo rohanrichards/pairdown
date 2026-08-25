@@ -3,6 +3,14 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${PAIRDOWN_PORT:-8790}"
+
+# Hosting a room server needs bun; the server is built on Bun.serve. Bringing an
+# agent to somebody else's room does not — that runs on node. Say which one is
+# missing rather than failing later with a bare "command not found".
+if ! command -v bun >/dev/null 2>&1; then
+  echo "pairdown: hosting a room server needs bun (https://bun.sh). Joining someone else's room does not — that runs on node." >&2
+  exit 1
+fi
 LOG="${ROOT}/data/server.log"
 
 # /api/rooms answers with a JSON array. Checking for the bracket rather than
